@@ -1,0 +1,80 @@
+WIRELY INSTALLATION
+===================
+
+1) Drag the Wirely icon onto the "Applications" folder on the right.
+
+2) First launch (one time only):
+   - Double-click Wirely in your Applications folder.
+   - macOS shows "“Wirely” Not Opened - Apple could not verify “Wirely” is
+     free of malware...". Click "Done" (do NOT choose "Move to Trash").
+   - Open System Settings -> Privacy & Security, scroll down and click
+     "Open Anyway". Confirm with your password or Touch ID, then click "Open".
+   - On macOS 15 and later the old "right-click -> Open" trick no longer works.
+   - Advanced: run this in Terminal instead:
+       xattr -dr com.apple.quarantine /Applications/Wirely.app
+
+3) In the app, click "Install service" and enter your Mac password (once).
+   Your Mac account must be an administrator.
+   macOS may show a "Background item added" notification; that is Wirely's
+   service. You can review or disable it in System Settings -> General ->
+   Login Items & Extensions.
+
+4) To add a profile, drag its .conf file into the window or use the "+"
+   button. A .zip made with "Export Tunnels to Zip" in the official WireGuard
+   app can be imported too.
+
+5) The main window is a map: your city (from your Mac's time zone) to the
+   server's city, with Distance / Latency / Download / Upload and a
+   Connect/Disconnect button. The server's location is looked up once via
+   ipwho.is (fallback ipinfo.io).
+
+6) Notifications and language: Settings -> General. macOS asks for
+   notification permission the first time one is shown. The app is English by
+   default; choose Language -> Türkçe to switch instantly.
+
+NOTE: Each person must use their own profile. If the same key is used on two
+Macs, both get disconnected.
+
+Uninstall: Wirely -> Settings -> "Remove service", then move the app to the
+Trash.
+
+Credits: wireguard-go (MIT), Manrope font (SIL OFL 1.1), Natural Earth land
+data (public domain).
+
+
+------------------------------------------------------------------------
+TÜRKÇE
+------------------------------------------------------------------------
+
+1) Wirely simgesini sağdaki "Applications" (Uygulamalar) klasörüne sürükleyin.
+
+2) İlk açılış (bir kereye mahsus):
+   - Applications klasöründen Wirely'ye çift tıklayın.
+   - "“Wirely” açılmadı — Apple, Wirely'nin kötü amaçlı yazılım içermediğini
+     doğrulayamadı" uyarısı çıkar. "Bitti" düğmesine basın
+     ("Çöp Sepetine Taşı"yı SEÇMEYİN).
+   - Sistem Ayarları → Gizlilik ve Güvenlik bölümünü açın, aşağı kaydırın,
+     "Yine de Aç" düğmesine basın, parola veya Touch ID ile onaylayın,
+     sonra "Aç" deyin.
+   - macOS 15 ve sonrasında eski "sağ tıkla → Aç" yöntemi çalışmaz.
+   - İleri düzey: Terminal'de şunu çalıştırın:
+       xattr -dr com.apple.quarantine /Applications/Wirely.app
+
+3) Uygulamada "Servisi kur" düğmesine basın ve Mac parolanızı girin (bir kez).
+   Mac hesabınızın yönetici olması gerekir.
+   macOS "Arka plan öğesi eklendi" bildirimi gösterebilir; bu Wirely'nin
+   servisidir. Sistem Ayarları → Genel → Giriş Öğeleri ve Uzantılar
+   bölümünden görülebilir veya kapatılabilir.
+
+4) Profil eklemek için .conf dosyasını pencereye sürükleyin ya da "+"
+   düğmesini kullanın. Resmi WireGuard uygulamasından aldığınız .zip de
+   içe aktarılabilir.
+
+5) Dil: Ayarlar → Genel → Dil → Türkçe (anında değişir). Bildirimler de aynı
+   yerden açılıp kapatılır.
+
+NOT: Her kişi kendi profilini kullanmalıdır. Aynı anahtarı iki Mac'te
+kullanırsanız ikisi de bağlantıdan düşer.
+
+Kaldırma: Wirely → Ayarlar → "Servisi Kaldır", sonra uygulamayı Çöp
+Sepeti'ne atın.

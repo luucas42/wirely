@@ -1,0 +1,3 @@
+import WirelyApp
+
+WirelyApp.main()

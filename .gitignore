@@ -1,0 +1,10 @@
+.build/
+.build-*/
+build/
+dist/
+.DS_Store
+*.xcodeproj/
+.swiftpm/
+.superpowers/
+docs/superpowers/
+docs/design/
