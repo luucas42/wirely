@@ -4,7 +4,24 @@ import Testing
 
 private let table = "A45E60\tApple\nB827EB\tRaspberry Pi\r\nbad line\nXYZ\tShort\n001122\tAcme\n\n"
 
+private let bundledTSV = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    .appendingPathComponent("Resources/oui.tsv")
+
 struct OUIDirectoryTests {
+    @Test func generatedTableParsesAndKnowsApple() throws {
+        guard let text = try? String(contentsOf: bundledTSV, encoding: .utf8) else { return }   // not generated here
+        let head = text.split(separator: "\n", omittingEmptySubsequences: true).prefix(50).joined(separator: "\n")
+        #expect(OUIDirectory(tsv: head).count == 50)
+        let full = OUIDirectory(tsv: text)
+        #expect(full.count > 1000)
+        #expect(full.vendor(for: try #require(MACAddress("00:03:93:00:00:01"))) == "Apple")
+    }
+
+    @Test func missingBundledTableIsNil() {
+        #expect(OUIDirectory.loadBundled() == nil)   // the test bundle ships no oui.tsv
+    }
+
     @Test func looksUpByOUI() throws {
         let dir = OUIDirectory(tsv: table)
         #expect(dir.vendor(for: try #require(MACAddress("a4:5e:60:00:00:01"))) == "Apple")

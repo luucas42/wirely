@@ -16,6 +16,14 @@ struct OUIDirectory {
         self.table = table
     }
 
+    /// The table shipped in the app bundle (`oui.tsv`); nil when absent, e.g. in tests. Parsing takes a
+    /// moment, so call it off the main thread.
+    static func loadBundled() -> OUIDirectory? {
+        guard let url = Bundle.main.url(forResource: "oui", withExtension: "tsv"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        return OUIDirectory(tsv: text)
+    }
+
     var count: Int { table.count }
 
     /// The vendor, or nil when unknown. A randomised (locally administered) address carries no vendor:

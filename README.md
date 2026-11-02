@@ -170,6 +170,7 @@ Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 - [wireguard-go](https://git.zx2c4.com/wireguard-go/) — MIT, © WireGuard LLC ([license](Resources/ThirdParty/wireguard-go-LICENSE))
 - [Manrope](https://github.com/googlefonts/manrope) — SIL Open Font License 1.1 ([license](Resources/ThirdParty/Manrope-OFL.txt))
 - [Natural Earth](https://www.naturalearthdata.com/) 1:50m land data — public domain, rasterised by `scripts/make-landmask.swift`
+- MAC vendor names: [IEEE OUI registry](https://standards-oui.ieee.org/oui/oui.csv), shortened by `scripts/make-oui.swift`
 - Server location: [ipwho.is](https://ipwho.is), [ipinfo.io](https://ipinfo.io)
 
 "WireGuard" and the WireGuard logo are registered trademarks of Jason A. Donenfeld. Wirely is an independent project and is not affiliated with or endorsed by WireGuard.

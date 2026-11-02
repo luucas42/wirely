@@ -24,6 +24,7 @@ cp "$BIN/wirely-helper" "$APP/Contents/MacOS/wirely-helper"
 cp "$WG" "$APP/Contents/MacOS/wireguard-go"
 # Drop debug stabs: they hold absolute source/object paths from the build machine.
 strip -S "$APP/Contents/MacOS/Wirely" "$APP/Contents/MacOS/wirely-helper"
+cp Resources/oui.tsv "$APP/Contents/Resources/oui.tsv"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Resources/Fonts/* "$APP/Contents/Resources/Fonts/"
 cp Resources/ThirdParty/wireguard-go-LICENSE "$APP/Contents/Resources/ThirdParty/wireguard-go-LICENSE"
