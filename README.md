@@ -129,6 +129,10 @@ Press the route button next to ⓘ on the status card (Esc closes it).
 
 ### Devices
 
+<p align="center">
+  <img src="docs/images/devices-dark.png" width="620" alt="Wirely Devices: the router in the middle of a dotted map with eleven devices around it (a MacBook, phones, a TV, a printer, smart-home devices and one new unknown device), and on the right the selected Hue Bridge's details and the device list">
+</p>
+
 Switch to **Devices** at the top left. The router sits in the middle, every other device around it; click one for its details, or use the list on the right.
 
 - A scan sends one 1-byte UDP packet to every address in your subnet (at most the /24 around your Mac), then reads the system's ARP table (`/usr/sbin/arp -an`). A scan takes a few seconds.
