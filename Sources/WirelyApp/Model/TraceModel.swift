@@ -107,7 +107,8 @@ final class TraceModel: ObservableObject {
         guard mine == generation else { return }
 
         let built = RouteStations.build(home: ctx.home, legs: legs, locations: found, vpn: ctx.vpn,
-                                        tunnelLatencyMs: ctx.latencyMs, targetName: name)
+                                        tunnelLatencyMs: ctx.latencyMs,
+                                        vpnAddress: Self.endpointHost(ctx.endpointHost), targetName: name)
         stations = built
         selected = built.first { $0.jumpMs != nil }?.id ?? built.last?.id
         hopCount = legs.reduce(0) { $0 + $1.result.hops.count }

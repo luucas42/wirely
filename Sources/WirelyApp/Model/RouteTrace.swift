@@ -49,9 +49,10 @@ enum RouteStations {
 
     private static let nonPublicNets: [IPNetwork] = [
         "100.64.0.0/10", "169.254.0.0/16", "0.0.0.0/8",
+        "240.0.0.0/4",   // class E (AWS backbone routers answer from here); includes 255.255.255.255
     ].compactMap { IPNetwork($0) }
 
-    /// Private, loopback, link-local, CGNAT (100.64.0.0/10) or unparseable: never geolocated.
+    /// Private, loopback, link-local, CGNAT (100.64.0.0/10), reserved class E (240.0.0.0/4) or unparseable: never geolocated.
     static func isNonPublic(_ ip: String) -> Bool {
         if ExitLocator.isPrivate(ip) { return true }
         guard let addr = IPAddress(ip) else { return true }
@@ -67,6 +68,8 @@ enum RouteStations {
     ///   - locations: public hop address to its location.
     ///   - vpn: where the VPN server is; the tunnel leg always ends with a `.vpn` station there, even
     ///     when the server never answered (then `tunnelLatencyMs` is its round trip, if known).
+    ///   - vpnAddress: the VPN server's own address (the tunnel endpoint); shown on its station instead of any
+    ///     internal hop folded into it.
     ///   - home: nil places the home station at the first located station (kept as "You"); with
     ///     nothing located the result is empty.
     ///   - targetName: unused for placement; kept so callers pass what the user typed.
@@ -75,16 +78,20 @@ enum RouteStations {
                       locations: [String: ExitLocation],
                       vpn: ExitLocation?,
                       tunnelLatencyMs: Double? = nil,
+                      vpnAddress: String? = nil,
                       targetName: String) -> [TraceStation] {
         var stations = [TraceStation(id: 0, city: home?.city ?? L10n.shared(.you), countryCode: nil,
                                      point: home?.point ?? GeoPoint(lat: 0, lon: 0), kind: .home,
                                      hopCount: 0, address: nil, rttMs: nil, jumpMs: nil,
                                      leg: legs.first?.kind ?? .direct)]
 
-        func fold(_ hop: TraceHop, into i: Int) {
+        /// Folds a hop into a station. `rtt` is true only when the hop's accepted location placed it there (or it is
+        /// the station's own private hop): hops without a usable location must not lend their round trip, e.g. a
+        /// cloud backbone's far-away routers behind the VPN server.
+        func fold(_ hop: TraceHop, into i: Int, rtt: Bool = false) {
             stations[i].hopCount += 1
-            if let a = hop.address { stations[i].address = a }
-            if let r = hop.rttMs { stations[i].rttMs = max(stations[i].rttMs ?? r, r) }
+            if let a = hop.address, rtt || stations[i].kind != .vpn { stations[i].address = a }
+            if rtt, let r = hop.rttMs { stations[i].rttMs = max(stations[i].rttMs ?? r, r) }
         }
 
         func append(_ hop: TraceHop, _ loc: ExitLocation, kind: TraceStationKind, leg: TraceLegKind) {
@@ -93,12 +100,11 @@ enum RouteStations {
                                          jumpMs: nil, leg: leg))
         }
 
-        // The VPN server never answered the tunnel leg: its round trip is best read off the first public hops
-        // right behind it, else the tunnel's own latency.
-        let openRtt = legs.first { $0.kind == .open }?.result.hops
-            .filter { $0.address.map { !isNonPublic($0) } ?? false }
-            .prefix(3).compactMap(\.rttMs).min()
-        let serverRtt = openRtt ?? tunnelLatencyMs
+        // The VPN server's round trip: hop 1 or 2 of the open leg (any address; hop 1 inside the tunnel is the server
+        // on its tunnel address), else the tunnel leg's own answer, else the tunnel's measured latency.
+        let openRtt = legs.first { $0.kind == .open }?.result.hops.filter { $0.rttMs != nil }.prefix(2).compactMap(\.rttMs).min()
+        let tunnelAnswer = legs.first { $0.kind == .tunnel }?.result.hops.first { $0.isDestination }?.rttMs
+        let serverRtt = openRtt ?? tunnelAnswer ?? tunnelLatencyMs
         let finalLeg = legs.last.flatMap { $0.kind == .tunnel ? nil : $0 }
 
         for (legIndex, (kind, result)) in legs.enumerated() {
@@ -124,18 +130,14 @@ enum RouteStations {
                     continue
                 }
                 guard let loc else {
-                    fold(hop, into: last)
+                    let own = stations[last].kind == .home && (hop.address.map(isNonPublic) ?? true)
+                    fold(hop, into: last, rtt: isServer || own)
                     if isServer, stations[last].kind == .hop { stations[last].kind = .vpn; placedServer = true }
                     continue
                 }
                 // The server always gets its own station, even when it sits in the home city.
                 if stations[last].city == loc.city, !(isServer && stations[last].kind == .home) {
-                    let before = stations[last].rttMs
-                    fold(hop, into: last)
-                    // Open-leg hops right behind the VPN server share its station; its round trip is the smaller one.
-                    if kind != .tunnel, stations[last].kind == .vpn, let b = before, let r = hop.rttMs {
-                        stations[last].rttMs = min(b, r)
-                    }
+                    fold(hop, into: last, rtt: true)
                     if isServer {
                         placedServer = true
                         stations[last].kind = .vpn
@@ -161,6 +163,11 @@ enum RouteStations {
                                                  rttMs: serverRtt, jumpMs: nil, leg: .tunnel))
                 }
             }
+        }
+
+        if let v = stations.firstIndex(where: { $0.kind == .vpn }) {
+            if let ms = serverRtt { stations[v].rttMs = ms }
+            if let a = vpnAddress { stations[v].address = a }
         }
 
         if let final = legs.last, final.kind != .tunnel {

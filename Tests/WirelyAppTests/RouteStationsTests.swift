@@ -116,7 +116,7 @@ struct RouteStationsTests {
     }
 
     @Test func noJumpBelowThreshold() {
-        let r = result([hop(1, "203.0.113.1", 2), hop(2, "203.0.113.2", 8), hop(3, "198.51.100.9", 17, dest: true)])
+        let r = result([hop(1, "203.0.113.1", 5), hop(2, "203.0.113.2", 11), hop(3, "198.51.100.9", 20, dest: true)])
         let locs = ["203.0.113.1": sofia, "203.0.113.2": vienna, "198.51.100.9": amsterdam]
         let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "example.com")
         #expect(s.allSatisfy { $0.jumpMs == nil })
@@ -128,7 +128,7 @@ struct RouteStationsTests {
         let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "example.com")
         #expect(s.map(\.city) == ["Istanbul", "Sofia", "Vienna"])
         #expect(s[1].hopCount == 2)
-        #expect(s[1].rttMs == 12)
+        #expect(s[1].rttMs == 8)   // the unlocated hop (12 ms) no longer lends its round trip
     }
 
     @Test func directLegWhenDisconnected() {
@@ -224,5 +224,40 @@ struct RouteStationsTests {
         #expect(s.map(\.kind) == [.home, .vpn, .target])
         #expect(s[1].rttMs == 46)
         #expect(s[2].locationNearPrevious)
+    }
+
+    @Test func foldedUnknownHopsKeepStationRtt() {
+        let r = result([hop(1, "203.0.113.1", 8), hop(2, "203.0.113.2", 90), hop(3, "240.1.1.1", 120),
+                        hop(4, "198.51.100.9", 30, dest: true)])
+        let locs = ["203.0.113.1": sofia, "198.51.100.9": vienna]   // .2 has no location, .3 is class E
+        let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "example.com")
+        #expect(s.map(\.city) == ["Istanbul", "Sofia", "Vienna"])
+        #expect(s[1].hopCount == 3)
+        #expect(s[1].rttMs == 8)
+        #expect(s[1].address == "240.1.1.1")
+    }
+
+    @Test func classEAddressesAreNonPublic() {
+        #expect(RouteStations.isNonPublic("240.5.80.41"))
+        #expect(RouteStations.isNonPublic("255.255.255.255"))
+        #expect(!RouteStations.isNonPublic("198.51.100.9"))
+    }
+
+    @Test func awsBackboneHopsDoNotInflateVpnRtt() {
+        let tunnel = result([hop(1, "192.168.1.1", 1), hop(2, nil, nil)], target: "203.0.113.10", address: "203.0.113.10",
+                            reached: false)
+        let open = result([hop(1, "10.67.0.1", 46), hop(2, "240.5.80.41", 150), hop(3, "240.5.80.42", 185),
+                           hop(4, "192.0.2.200", 187)], reached: false)
+        let boardman = loc("Boardman", "US", 45.8, -119.7)
+        let locs = ["192.0.2.200": boardman]
+        let s = RouteStations.build(home: home, legs: [(.tunnel, tunnel), (.open, open)], locations: locs,
+                                    vpn: frankfurt, tunnelLatencyMs: 109, vpnAddress: "203.0.113.10",
+                                    targetName: "example.com")
+        let v = s.first { $0.kind == .vpn }
+        #expect(v?.rttMs == 46)
+        #expect(v?.address == "203.0.113.10")
+        #expect(s.last?.city == "Boardman")
+        #expect(s.last?.kind == .lastAnswer)
+        #expect(s.last?.jumpMs == 141)
     }
 }
