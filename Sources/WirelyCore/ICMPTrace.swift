@@ -15,6 +15,13 @@ public struct ICMPAnswer: Equatable {
     }
 }
 
+/// What a trace probe looks like on the wire.
+public enum ProbeKind: Equatable {
+    case icmpEcho
+    /// UDP datagrams from `sourcePort` to `basePort + seq`, as classic traceroute sends them.
+    case udp(sourcePort: UInt16, basePort: UInt16)
+}
+
 /// ICMP Echo encoding and parsing for route tracing. Pure bytes, no sockets.
 public enum ICMPCodec {
     /// RFC 1071 Internet checksum.
@@ -61,6 +68,28 @@ public enum ICMPCodec {
                               seq: be16(quoted, inner + 6))
         default:
             return nil
+        }
+    }
+
+    /// Like `parse(_:id:)` for any probe kind. UDP probes are recognised by the quoted UDP source port; the
+    /// answer's `seq` is the probe's destination port minus `basePort`. A Port Unreachable from the target
+    /// comes back as `.unreachable`.
+    public static func parse(_ packet: [UInt8], probe: ProbeKind, icmpID: UInt16) -> ICMPAnswer? {
+        switch probe {
+        case .icmpEcho:
+            return parse(packet, id: icmpID)
+        case .udp(let sourcePort, let basePort):
+            guard let outer = ipv4HeaderLength(packet, minimumPayload: 8), packet[9] == 1 else { return nil }
+            let type = packet[outer], code = packet[outer + 1]
+            guard type == 11 && code == 0 || type == 3 else { return nil }
+            let quoted = Array(packet[(outer + 8)...])
+            guard let inner = ipv4HeaderLength(quoted, minimumPayload: 8), quoted[9] == 17,
+                  be16(quoted, inner) == sourcePort else { return nil }
+            let destinationPort = be16(quoted, inner + 2)
+            guard destinationPort >= basePort else { return nil }
+            let from = "\(packet[12]).\(packet[13]).\(packet[14]).\(packet[15])"
+            return ICMPAnswer(kind: type == 11 ? .timeExceeded : .unreachable, from: from,
+                              seq: destinationPort - basePort)
         }
     }
 

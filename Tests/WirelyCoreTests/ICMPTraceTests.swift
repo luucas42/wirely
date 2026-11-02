@@ -195,3 +195,50 @@ private func seq(_ ttl: Int, round: Int = 0) -> UInt16 { UInt16(round * 64 + ttl
     c.received(ICMPAnswer(kind: .timeExceeded, from: "203.0.113.9", seq: 0), at: 0.01, target: "192.0.2.7")
     #expect(c.hops().isEmpty)
 }
+
+// MARK: - UDP probes
+
+/// Time Exceeded (11) or Destination Unreachable (3) quoting one of our UDP probes.
+private func udpErrorPacket(type: UInt8, code: UInt8 = 0, from src: [UInt8], sourcePort: UInt16, destinationPort: UInt16,
+                            quotedUDPBytes: Int = 8, quotedProto: UInt8 = 17) -> [UInt8] {
+    let udp: [UInt8] = be16(sourcePort) + be16(destinationPort) + be16(20) + [0, 0]
+    let inner = ipv4Header(src: me, dst: target, proto: quotedProto, totalLength: 20 + udp.count + 12)
+    let icmp: [UInt8] = [type, code, 0, 0, 0, 0, 0, 0] + inner + Array(udp.prefix(quotedUDPBytes))
+    return ipv4Header(src: src, dst: me, totalLength: 20 + icmp.count) + icmp
+}
+
+private let udpProbe = ProbeKind.udp(sourcePort: 45000, basePort: 33434)
+
+@Test func parsesTimeExceededQuotingUDPProbe() {
+    let packet = udpErrorPacket(type: 11, from: router, sourcePort: 45000, destinationPort: 33434 + 70)
+    #expect(ICMPCodec.parse(packet, probe: udpProbe, icmpID: 0x1234)
+            == ICMPAnswer(kind: .timeExceeded, from: "203.0.113.10", seq: 70))
+}
+
+@Test func parsesPortUnreachableFromTarget() {
+    let packet = udpErrorPacket(type: 3, code: 3, from: target, sourcePort: 45000, destinationPort: 33434 + 5)
+    #expect(ICMPCodec.parse(packet, probe: udpProbe, icmpID: 0x1234)
+            == ICMPAnswer(kind: .unreachable, from: "192.0.2.7", seq: 5))
+}
+
+@Test func ignoresUDPProbesFromOtherSourcePorts() {
+    let packet = udpErrorPacket(type: 11, from: router, sourcePort: 45001, destinationPort: 33434 + 3)
+    #expect(ICMPCodec.parse(packet, probe: udpProbe, icmpID: 0x1234) == nil)
+    // Ports below the base port are not ours either.
+    let low = udpErrorPacket(type: 11, from: router, sourcePort: 45000, destinationPort: 33000)
+    #expect(ICMPCodec.parse(low, probe: udpProbe, icmpID: 0x1234) == nil)
+    // A quoted ICMP echo is not a UDP probe, and a quoted UDP probe is not an echo.
+    #expect(ICMPCodec.parse(errorPacket(type: 11, from: router, id: 0x1234, seq: 3), probe: udpProbe, icmpID: 0x1234) == nil)
+    #expect(ICMPCodec.parse(packet, probe: .icmpEcho, icmpID: 0x1234) == nil)
+}
+
+@Test func rejectsTruncatedUDPAnswers() {
+    let good = udpErrorPacket(type: 11, from: router, sourcePort: 45000, destinationPort: 33434 + 3)
+    #expect(ICMPCodec.parse(good, probe: udpProbe, icmpID: 0x1234) != nil)
+    #expect(ICMPCodec.parse(Array(good.dropLast(1)), probe: udpProbe, icmpID: 0x1234) == nil)
+    #expect(ICMPCodec.parse(Array(good.prefix(20 + 8 + 10)), probe: udpProbe, icmpID: 0x1234) == nil)
+    #expect(ICMPCodec.parse([], probe: udpProbe, icmpID: 0x1234) == nil)
+    // Time Exceeded during reassembly (code 1) is not an answer.
+    let reassembly = udpErrorPacket(type: 11, code: 1, from: router, sourcePort: 45000, destinationPort: 33434 + 3)
+    #expect(ICMPCodec.parse(reassembly, probe: udpProbe, icmpID: 0x1234) == nil)
+}

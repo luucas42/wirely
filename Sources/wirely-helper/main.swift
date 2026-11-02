@@ -180,6 +180,39 @@ func runTrace(_ args: [String]) -> Never {
     }
 }
 
+/// One line of `trace-lab` output for a finished run.
+func traceLabLine(name: String, spacing: TimeInterval, result: TraceResult) -> String {
+    let destination = result.hops.first { $0.isDestination }.map { String($0.ttl) } ?? "-"
+    let hops = result.hops.map { hop -> String in
+        guard let rtt = hop.rttMs else { return "\(hop.ttl):*" }
+        return "\(hop.ttl):" + String(format: "%.1f", rtt) + (hop.isDestination ? "!" : "")
+    }.joined(separator: " ")
+    let label = name.padding(toLength: 4, withPad: " ", startingAt: 0)
+    let gap = "\(Int((spacing * 1000).rounded()))ms".padding(toLength: 4, withPad: " ", startingAt: 0)
+    return "\(label)  \(gap)  \(result.durationMs)ms reached=\(result.reached ? "yes" : "no ")  dest=\(destination) | \(hops)"
+}
+
+/// Hidden: traces the same target with every probe type and spacing, to compare them on one line.
+func runTraceLab(_ args: [String]) -> Never {
+    guard getuid() == 0 else { fail("wirely-helper trace-lab root olarak çalışmalı (must run as root)") }
+    guard let target = args.first else { usageExit() }
+    let runs: [(String, ProbeKindChoice, TimeInterval)] = [
+        ("icmp", .icmp, 0.002), ("icmp", .icmp, 0.015), ("udp", .udp, 0.002), ("udp", .udp, 0.015),
+    ]
+    for (index, run) in runs.enumerated() {
+        if index > 0 { Thread.sleep(forTimeInterval: 1.0) }
+        do {
+            let result = try Tracer().trace(target, options: TraceOptions(probe: run.1, spacing: run.2))
+            print(traceLabLine(name: run.0, spacing: run.2, result: result))
+        } catch let error as TraceError {
+            fail("\(error.code)" + (error.arg.map { ": \($0)" } ?? ""))
+        } catch {
+            fail(error.localizedDescription)
+        }
+    }
+    exit(0)
+}
+
 func runCleanup() -> Never {
     guard getuid() == 0 else { fail("wirely-helper cleanup root olarak çalışmalı") }
     let fileLog = FileLog(path: HelperConstants.logPath)
@@ -195,6 +228,7 @@ switch argv.first {
 case "daemon": runDaemon(Array(argv.dropFirst()))
 case "ctl": runCtl(Array(argv.dropFirst()))
 case "trace": runTrace(Array(argv.dropFirst()))
+case "trace-lab": runTraceLab(Array(argv.dropFirst()))
 case "cleanup": runCleanup()
 default: usageExit()
 }

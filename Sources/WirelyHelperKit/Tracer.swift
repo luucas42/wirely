@@ -29,7 +29,29 @@ public enum TraceError: Error, Equatable {
     }
 }
 
-/// Parallel-TTL ICMP route tracer on a raw socket (needs root). One trace at a time.
+/// Which packets the probes are.
+public enum ProbeKindChoice: Equatable {
+    case icmp, udp
+}
+
+/// How a trace sends its probes and how long it may take.
+public struct TraceOptions {
+    public var probe: ProbeKindChoice
+    /// Pause between two probes of a round, in seconds.
+    public var spacing: TimeInterval
+    /// Overall time budget in seconds.
+    public var deadline: TimeInterval
+
+    public init(probe: ProbeKindChoice = .icmp, spacing: TimeInterval = 0.002, deadline: TimeInterval = 3.0) {
+        self.probe = probe
+        self.spacing = spacing
+        self.deadline = deadline
+    }
+
+    public static let `default` = TraceOptions()
+}
+
+/// Parallel-TTL route tracer on a raw socket (needs root). One trace at a time.
 public final class Tracer {
     private let lock = NSLock()
 
@@ -87,8 +109,35 @@ public final class Tracer {
         return String(cString: buf)
     }
 
-    /// Traces the route to `target`. `deadline` is the overall time budget in seconds.
-    public func trace(_ target: String, deadline: TimeInterval = 3.0) throws -> TraceResult {
+    /// First port a UDP probe is sent to; the probe's sequence number is added to it.
+    private static let udpBasePort: UInt16 = 33434
+
+    /// A UDP socket bound to a random source port in 40000...60999, so replies can be matched to this trace.
+    private static func makeUDPSocket() throws -> (fd: Int32, port: UInt16) {
+        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard fd >= 0 else { throw TraceError.socket(String(cString: strerror(errno))) }
+        for _ in 0..<8 {
+            let port = UInt16.random(in: 40000...60999)
+            var sin = sockaddr_in()
+            sin.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            sin.sin_family = sa_family_t(AF_INET)
+            sin.sin_port = port.bigEndian
+            sin.sin_addr.s_addr = INADDR_ANY
+            let result = withUnsafePointer(to: &sin) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            if result == 0 { return (fd, port) }
+            if errno != EADDRINUSE { break }
+        }
+        let message = String(cString: strerror(errno))
+        close(fd)
+        throw TraceError.socket(message)
+    }
+
+    /// Traces the route to `target`.
+    public func trace(_ target: String, options: TraceOptions = .default) throws -> TraceResult {
         guard lock.try() else { throw TraceError.busy }
         defer { lock.unlock() }
 
@@ -99,10 +148,19 @@ public final class Tracer {
         guard fd >= 0 else { throw TraceError.socket(String(cString: strerror(errno))) }
         defer { close(fd) }
 
+        var udpFd: Int32 = -1
+        var probeKind = ProbeKind.icmpEcho
+        if options.probe == .udp {
+            let udp = try Self.makeUDPSocket()
+            udpFd = udp.fd
+            probeKind = .udp(sourcePort: udp.port, basePort: Self.udpBasePort)
+        }
+        defer { if udpFd >= 0 { close(udpFd) } }
+
         let id = UInt16.random(in: 0...UInt16.max)
         let payload = [UInt8](repeating: 0x57, count: 24)
         var collector = TraceCollector()
-        var schedule = ProbeSchedule(maxTTL: collector.maxTTL, deadline: deadline)
+        var schedule = ProbeSchedule(maxTTL: collector.maxTTL, deadline: options.deadline)
         let start = ProcessInfo.processInfo.systemUptime
         var lastNewAnswerAt: TimeInterval?
         var buffer = [UInt8](repeating: 0, count: 1500)
@@ -110,17 +168,24 @@ public final class Tracer {
         func clock() -> TimeInterval { ProcessInfo.processInfo.systemUptime - start }
 
         func probe(ttl: Int, round: Int) throws {
+            let sock = udpFd >= 0 ? udpFd : fd
             var value = Int32(ttl)
-            guard setsockopt(fd, IPPROTO_IP, IP_TTL, &value, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
+            guard setsockopt(sock, IPPROTO_IP, IP_TTL, &value, socklen_t(MemoryLayout<Int32>.size)) == 0 else {
                 throw TraceError.socket(String(cString: strerror(errno)))
             }
-            let packet = ICMPCodec.echoRequest(id: id, seq: TraceCollector.seq(ttl: ttl, round: round),
-                                               payload: payload)
+            let seq = TraceCollector.seq(ttl: ttl, round: round)
             var to = destination
+            let packet: [UInt8]
+            if udpFd >= 0 {
+                to.sin_port = (Self.udpBasePort + seq).bigEndian
+                packet = [UInt8](repeating: 0x57, count: 12)
+            } else {
+                packet = ICMPCodec.echoRequest(id: id, seq: seq, payload: payload)
+            }
             let sent = packet.withUnsafeBytes { raw in
                 withUnsafePointer(to: &to) { ptr in
                     ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                        sendto(fd, raw.baseAddress, raw.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                        sendto(sock, raw.baseAddress, raw.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                     }
                 }
             }
@@ -145,7 +210,7 @@ public final class Tracer {
                 guard ready > 0 else { continue }
                 let n = recvfrom(fd, &buffer, buffer.count, 0, nil, nil)
                 guard n > 0 else { continue }
-                if let answer = ICMPCodec.parse(Array(buffer[0..<n]), id: id) {
+                if let answer = ICMPCodec.parse(Array(buffer[0..<n]), probe: probeKind, icmpID: id) {
                     let arrived = ProcessInfo.processInfo.systemUptime
                     if collector.received(answer, at: arrived, target: address) {
                         lastNewAnswerAt = arrived - start
@@ -158,9 +223,9 @@ public final class Tracer {
         run: while true {
             switch schedule.next(now: clock(), collector: collector, lastNewAnswerAt: lastNewAnswerAt) {
             case .send(let round, let ttls):
-                // Ascending, 2 ms apart so a burst does not trip rate limiting; keep reading in the gaps.
+                // Ascending and `spacing` apart so a burst does not trip rate limiting; keep reading in the gaps.
                 for (index, ttl) in ttls.sorted().enumerated() {
-                    if index > 0 { try drain(until: clock() + 0.002, stopOnPacket: false) }
+                    if index > 0 { try drain(until: clock() + options.spacing, stopOnPacket: false) }
                     try probe(ttl: ttl, round: round)
                 }
             case .wait(let until):
