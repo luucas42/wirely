@@ -20,13 +20,9 @@ private func configText(address: String, allowed: String) -> String {
     configText(allowed: allowed).replacingOccurrences(of: "Address = 10.8.0.2/32", with: "Address = \(address)")
 }
 
-private func serviceEntry(_ n: Int, _ name: String, device: String) -> String {
-    "(\(n)) \(name)\n(Hardware Port: \(name), Device: \(device))\n\n"
+private func dnsEntry(_ service: String, _ servers: [String] = []) -> DNSBackup {
+    DNSBackup(service: service, servers: servers, searchDomains: [])
 }
-private let servicesHeader = "An asterisk (*) denotes that a network service is disabled.\n"
-private let servicesOutput = servicesHeader + serviceEntry(1, "Wi-Fi", device: "en0")
-    + serviceEntry(2, "USB LAN", device: "en11")
-private func noDNS(_ s: String) -> String { "There aren't any DNS Servers set on \(s)." }
 
 private final class Env {
     let runner = FakeRunner()
@@ -35,18 +31,15 @@ private final class Env {
     var launcher: FakeLauncher { launchers[launchers.count - 1] }
     var statuses: [TunnelStatus] = []
     var resolver = FakeResolver(table: ["vpn.example.com": "203.0.113.5"])
+    let dns: FakeDNSConfigurator
     var manager: TunnelManager!
 
-    init(wifiDNS: String? = nil, services: String? = nil) {
+    init(wifiDNS: [String] = []) {
+        dns = FakeDNSConfigurator([dnsEntry("Wi-Fi", wifiDNS), dnsEntry("USB LAN")])
         runner.script(NetPlan.netstatCommand(.v4),
                       stdout: "Destination Gateway Flags Netif Expire\ndefault 192.168.1.1 UGScg en0\n")
         runner.script(NetPlan.ifconfigShow("en0"), stdout: "en0: flags=8863<UP> mtu 1500\n")
         runner.script(NetPlan.routeGet(IPAddress("203.0.113.5")!), stdout: "   interface: en0\n")
-        runner.script(DNSPlan.listServiceOrder, stdout: services ?? servicesOutput)
-        runner.script(DNSPlan.getServers("Wi-Fi"), stdout: wifiDNS ?? noDNS("Wi-Fi"))
-        runner.script(DNSPlan.getServers("USB LAN"), stdout: noDNS("USB LAN"))
-        runner.script(DNSPlan.getSearchDomains("Wi-Fi"), stdout: "There aren't any Search Domains set on Wi-Fi.")
-        runner.script(DNSPlan.getSearchDomains("USB LAN"), stdout: "There aren't any Search Domains set on USB LAN.")
         let r = runner
         manager = TunnelManager(
             runner: r,
@@ -55,7 +48,7 @@ private final class Env {
                 self.launchers.append(l)
                 return l
             },
-            resolver: resolver, store: store, log: { _ in },
+            resolver: resolver, store: store, dns: dns, log: { _ in },
             now: { Date(timeIntervalSince1970: 1_000) })
         manager.onStatusChange = { [unowned self] in self.statuses.append($0) }
     }
@@ -63,7 +56,6 @@ private final class Env {
 
 private func cmd(_ path: String, _ args: String...) -> NetCommand { NetCommand(path, args) }
 private let route = "/sbin/route"
-private let ns = "/usr/sbin/networksetup"
 private let bypassAdd = "/sbin/route -q -n add -inet 203.0.113.5 -gateway 192.168.1.1"
 private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
 
@@ -79,8 +71,9 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
     let half = try #require(env.runner.index(of: "/sbin/route -q -n add -inet 0.0.0.0/1 -interface utun7"))
     #expect(bypass < half)
     #expect(env.runner.ran("/sbin/ifconfig utun7 mtu 1420"))
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 1.1.1.1"))
-    #expect(env.runner.ran("\(ns) -setdnsservers USB LAN 1.1.1.1"))
+    #expect(env.dns.servers(of: "Wi-Fi") == ["1.1.1.1"])
+    #expect(env.dns.servers(of: "USB LAN") == ["1.1.1.1"])
+    #expect(env.dns.applied.count == 1)   // every service in one commit
     let saved = try #require(env.store.state)
     #expect(saved.dnsBackups.count == 2)
     #expect(saved.dnsBackups.allSatisfy { $0.servers.isEmpty && $0.searchDomains.isEmpty })
@@ -95,10 +88,8 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
     let s = env.manager.down()
     #expect(s == .disconnected)
     #expect(env.runner.ran(bypassDelete))
-    for svc in ["Wi-Fi", "USB LAN"] {
-        #expect(env.runner.ran("\(ns) -setdnsservers \(svc) Empty"))
-        #expect(env.runner.ran("\(ns) -setsearchdomains \(svc) Empty"))
-    }
+    #expect(env.dns.services == [dnsEntry("Wi-Fi"), dnsEntry("USB LAN")])
+    #expect(env.dns.applied.count == 2)
     #expect(env.launcher.stopped)
     #expect(env.store.state == nil)
     env.runner.clearRecorded()
@@ -108,11 +99,10 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
 }
 
 @Test func restoresPreviousCustomDNS() throws {
-    let env = Env(wifiDNS: "8.8.8.8\n9.9.9.9\n")
+    let env = Env(wifiDNS: ["8.8.8.8", "9.9.9.9"])
     _ = try env.manager.up(name: "home", configText: configText())
-    env.runner.clearRecorded()
     _ = env.manager.down()
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 8.8.8.8 9.9.9.9"))
+    #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8", "9.9.9.9"])
 }
 
 @Test func failedUpRollsBackEverything() throws {
@@ -128,21 +118,20 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
 }
 
 @Test func stateSaveFailureRestoresDNS() throws {
-    let env = Env(wifiDNS: "8.8.8.8")
+    let env = Env(wifiDNS: ["8.8.8.8"])
     let store = env.store
     // Let the incremental saves succeed, then fail once DNS has been applied.
-    env.runner.onRun = { c in
-        if c.description == "\(ns) -setdnsservers USB LAN 1.1.1.1" { store.failSave = true }
+    env.dns.onApply = { settings in
+        if settings.first?.servers == ["1.1.1.1"] { store.failSave = true }
     }
     #expect(throws: TunnelError.self) {
         try env.manager.up(name: "home", configText: configText())
     }
     #expect(env.launcher.stopped)
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 1.1.1.1"))
     // Applied DNS must have been put back afterwards.
-    let applied = try #require(env.runner.index(of: "\(ns) -setdnsservers Wi-Fi 1.1.1.1"))
-    let restored = try #require(env.runner.index(of: "\(ns) -setdnsservers Wi-Fi 8.8.8.8"))
-    #expect(applied < restored)
+    #expect(env.dns.applied.count == 2)
+    #expect(env.dns.applied[0].allSatisfy { $0.servers == ["1.1.1.1"] })
+    #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8"])
     #expect(env.runner.ran(bypassDelete))
     #expect(env.store.state == nil)
 }
@@ -173,7 +162,7 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
     let r = env.runner
     let manager = TunnelManager(runner: r, makeLauncher: { [unowned env] in
         let l = FakeLauncher(runner: r); env.launchers.append(l); return l
-    }, resolver: env.resolver, store: env.store, log: { _ in })
+    }, resolver: env.resolver, store: env.store, dns: env.dns, log: { _ in })
     #expect(throws: TunnelError.resolve("vpn.example.com")) {
         try manager.up(name: "home", configText: configText())
     }
@@ -214,37 +203,43 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
 }
 
 @Test func networkChangeKeepsOriginalDNSBackup() throws {
-    let env = Env(wifiDNS: "8.8.8.8")
+    let env = Env(wifiDNS: ["8.8.8.8"])
     _ = try env.manager.up(name: "home", configText: configText())
-    env.runner.script(DNSPlan.getServers("Wi-Fi"), stdout: "1.1.1.1")
-    env.runner.clearRecorded()
+    // Something else rewrote Wi-Fi's DNS while we were connected: re-apply ours, keep the original backup.
+    env.dns.services[0] = dnsEntry("Wi-Fi", ["9.9.9.9"])
     env.manager.networkChanged()
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 1.1.1.1"))
+    #expect(env.dns.servers(of: "Wi-Fi") == ["1.1.1.1"])
     let wifi = try #require(env.store.state?.dnsBackups.first { $0.service == "Wi-Fi" })
     #expect(wifi.servers == ["8.8.8.8"])
-    env.runner.clearRecorded()
     _ = env.manager.down()
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 8.8.8.8"))
+    #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8"])
+}
+
+@Test func networkChangeWithoutDNSDriftDoesNotCommit() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText())
+    env.manager.networkChanged()
+    #expect(env.dns.applied.count == 1)
 }
 
 @Test func networkChangeBacksUpNewServices() throws {
     let env = Env()
     _ = try env.manager.up(name: "home", configText: configText())
-    env.runner.script(DNSPlan.listServiceOrder, stdout: servicesOutput + serviceEntry(3, "Thunderbolt", device: "en5"))
-    env.runner.script(DNSPlan.getServers("Thunderbolt"), stdout: "4.4.4.4")
+    env.dns.services.append(dnsEntry("Thunderbolt", ["4.4.4.4"]))
     env.manager.networkChanged()
-    #expect(env.runner.ran("\(ns) -setdnsservers Thunderbolt 1.1.1.1"))
+    #expect(env.dns.servers(of: "Thunderbolt") == ["1.1.1.1"])
     #expect(env.store.state?.dnsBackups.first { $0.service == "Thunderbolt" }?.servers == ["4.4.4.4"])
 }
 
-@Test func vpnServicesNeverTouched() throws {
-    let env = Env(services: servicesHeader + serviceEntry(1, "Wi-Fi", device: "en0")
-                  + serviceEntry(2, "Tailscale", device: ""))
-    _ = try env.manager.up(name: "home", configText: configText())
-    env.manager.networkChanged()
-    _ = env.manager.down()
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 1.1.1.1"))
-    #expect(!env.runner.commands.contains { $0.description.contains("Tailscale") })
+@Test func dnsReadFailureAbortsConnect() {
+    let env = Env()
+    env.dns.failSnapshot = true
+    #expect(throws: TunnelError.self) {
+        try env.manager.up(name: "home", configText: configText())
+    }
+    #expect(env.launcher.stopped)
+    #expect(env.dns.applied.isEmpty)
+    #expect(env.store.state == nil)
 }
 
 @Test func networkChangeIsNoOpWhenInactive() {
@@ -295,7 +290,7 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
     env.statuses = []
     env.launcher.simulateExit()
     #expect(env.runner.ran(bypassDelete))
-    #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi Empty"))
+    #expect(env.dns.servers(of: "Wi-Fi") == [])
     #expect(env.store.state == nil)
     #expect(env.manager.status().state == .failed)
     #expect(env.manager.status().message == "wireguard-go beklenmedik şekilde kapandı")
@@ -350,7 +345,7 @@ private func staleState() -> PersistedState {
         env.manager.cleanupStale()
         #expect(env.runner.ran("/bin/kill -TERM 4242") == shouldKill)
         #expect(env.runner.ran(bypassDelete))
-        #expect(env.runner.ran("\(ns) -setdnsservers Wi-Fi 8.8.8.8"))
+        #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8"])
         #expect(env.store.state == nil)
     }
 }
@@ -365,11 +360,11 @@ private func staleState() -> PersistedState {
 }
 
 @Test func stateIsPersistedBeforeDNSApplied() throws {
-    let env = Env(wifiDNS: "8.8.8.8")
+    let env = Env(wifiDNS: ["8.8.8.8"])
     var checked = false
     let store = env.store
-    env.runner.onRun = { c in
-        if c.description == "\(ns) -setdnsservers Wi-Fi 1.1.1.1" {
+    env.dns.onApply = { settings in
+        if settings.first?.servers == ["1.1.1.1"] {
             checked = true
             #expect(store.load()?.dnsBackups.first { $0.service == "Wi-Fi" }?.servers == ["8.8.8.8"])
         }

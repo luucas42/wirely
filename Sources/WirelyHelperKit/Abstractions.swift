@@ -36,6 +36,15 @@ public protocol StateStore: AnyObject {
     func clear()
 }
 
+/// Per-network-service manual DNS (what `networksetup -set/getdnsservers` and `-searchdomains` touch).
+public protocol DNSConfigurator: AnyObject {
+    /// Manual DNS of every enabled service that has a real device (Wi-Fi, Ethernet…), in service
+    /// order. Services without a device — other VPN apps — are left out so they're never touched.
+    func snapshot() throws -> [DNSBackup]
+    /// Sets servers and search domains of each listed service in one commit; an empty list clears it.
+    func apply(_ settings: [DNSBackup]) throws
+}
+
 public struct EndpointRoute: Equatable, Codable {
     public var ip: IPAddress
     /// The command that was used to add the route.

@@ -77,6 +77,31 @@ final class FakeLauncher: WireGuardLauncher {
     func simulateExit() { onUnexpectedExit?() }
 }
 
+/// In-memory per-service DNS; `applied` records every commit, in order.
+final class FakeDNSConfigurator: DNSConfigurator {
+    var services: [DNSBackup]
+    private(set) var applied: [[DNSBackup]] = []
+    var failSnapshot = false
+    var onApply: (([DNSBackup]) -> Void)?
+
+    init(_ services: [DNSBackup] = []) { self.services = services }
+
+    func snapshot() throws -> [DNSBackup] {
+        if failSnapshot { throw FakeLauncher.Failure() }
+        return services
+    }
+
+    func apply(_ settings: [DNSBackup]) throws {
+        onApply?(settings)
+        applied.append(settings)
+        for s in settings {
+            if let i = services.firstIndex(where: { $0.service == s.service }) { services[i] = s }
+        }
+    }
+
+    func servers(of service: String) -> [String]? { services.first { $0.service == service }?.servers }
+}
+
 struct FakeResolver: EndpointResolver {
     struct Failure: Error {}
     var table: [String: String]

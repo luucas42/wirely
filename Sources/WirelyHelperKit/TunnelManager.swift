@@ -13,6 +13,7 @@ public final class TunnelManager {
     private let makeLauncher: () -> WireGuardLauncher
     private let resolver: EndpointResolver
     private let store: StateStore
+    private let dns: DNSConfigurator
     private let log: (String) -> Void
     private let now: () -> Date
 
@@ -22,12 +23,13 @@ public final class TunnelManager {
     public var onStatusChange: ((TunnelStatus) -> Void)?
 
     public init(runner: CommandRunner, makeLauncher: @escaping () -> WireGuardLauncher,
-                resolver: EndpointResolver, store: StateStore,
+                resolver: EndpointResolver, store: StateStore, dns: DNSConfigurator,
                 log: @escaping (String) -> Void, now: @escaping () -> Date = Date.init) {
         self.runner = runner
         self.makeLauncher = makeLauncher
         self.resolver = resolver
         self.store = store
+        self.dns = dns
         self.log = log
         self.now = now
     }
@@ -119,11 +121,12 @@ public final class TunnelManager {
             }
 
             if !config.interface.dnsServers.isEmpty {
-                for service in DNSPlan.parseHardwareServices(runner.run(DNSPlan.listServiceOrder).stdout) {
-                    state.dnsBackups.append(backup(of: service))
-                    try persist(state)  // backup must be durable before DNS is touched
-                    applyDNS(service: service, state: state)
-                }
+                // One read, one durable backup, one commit for every service.
+                let current: [DNSBackup]
+                do { current = try dns.snapshot() } catch { throw TunnelError.commandFailed("DNS: \(describe(error))") }
+                state.dnsBackups = current
+                try persist(state)  // backups must be durable before DNS is touched
+                applyDNS(tunnelDNS(for: current.map(\.service), state: state))
             }
 
             try persist(state)
@@ -149,8 +152,10 @@ public final class TunnelManager {
     public func down() -> TunnelStatus {
         lastFailed = nil
         guard let a = active else { return .disconnected }
+        let started = DispatchTime.now()
         active = nil
         teardown(a.state, launcher: a.launcher, stopLauncher: true)
+        log("down \(a.state.tunnelName): \((DispatchTime.now().uptimeNanoseconds - started.uptimeNanoseconds) / 1_000_000) ms")
         onStatusChange?(.disconnected)
         return .disconnected
     }
@@ -189,18 +194,24 @@ public final class TunnelManager {
             }
         }
 
+        var desired: [DNSBackup]?
         if !a.state.dnsServers.isEmpty {
-            // Never re-read existing backups: the system DNS now holds our own servers.
-            for b in a.state.dnsBackups { applyDNS(service: b.service, state: a.state) }
-            let known = Set(a.state.dnsBackups.map(\.service))
-            for service in DNSPlan.parseHardwareServices(runner.run(DNSPlan.listServiceOrder).stdout) where !known.contains(service) {
-                a.state.dnsBackups.append(backup(of: service))
-                applyDNS(service: service, state: a.state)
+            do {
+                let current = try dns.snapshot()
+                // Back up services that appeared since connecting (e.g. a dock's Ethernet). Never re-read
+                // known ones: they now hold our own servers.
+                let known = Set(a.state.dnsBackups.map(\.service))
+                a.state.dnsBackups += current.filter { !known.contains($0.service) }
+                let wanted = tunnelDNS(for: current.map(\.service), state: a.state)
+                if wanted != current { desired = wanted }   // unchanged → no commit, no resolver flush
+            } catch {
+                log("DNS okunamadı: \(describe(error))")
             }
         }
 
         active = a
         do { try store.save(a.state) } catch { log("Durum kaydedilemedi: \(describe(error))") }
+        if let desired { applyDNS(desired) }   // after the save, so new backups are durable first
     }
 
     // MARK: - stale cleanup
@@ -239,10 +250,8 @@ public final class TunnelManager {
             let c = NetPlan.endpointRouteDelete(r.ip)
             if runner.run(c).status != 0 { log("Yönlendirme silinemedi: \(c)") }
         }
-        for b in state.dnsBackups {
-            for c in DNSPlan.restore(b) where runner.run(c).status != 0 {
-                log("DNS geri yüklenemedi: \(c)")
-            }
+        if !state.dnsBackups.isEmpty {
+            do { try dns.apply(state.dnsBackups) } catch { log("DNS geri yüklenemedi: \(describe(error))") }
         }
         for n in state.rejectRoutes {
             let c = NetPlan.routeDelete(n)
@@ -281,17 +290,13 @@ public final class TunnelManager {
         return !iface.hasPrefix("utun")
     }
 
-    private func backup(of service: String) -> DNSBackup {
-        DNSBackup(service: service,
-                  servers: DNSPlan.parseList(runner.run(DNSPlan.getServers(service)).stdout),
-                  searchDomains: DNSPlan.parseList(runner.run(DNSPlan.getSearchDomains(service)).stdout))
+    /// The profile's DNS for each of `services`.
+    private func tunnelDNS(for services: [String], state: PersistedState) -> [DNSBackup] {
+        services.map { DNSBackup(service: $0, servers: state.dnsServers.map(\.description), searchDomains: state.dnsSearch) }
     }
 
-    private func applyDNS(service: String, state: PersistedState) {
-        for c in DNSPlan.apply(service: service, servers: state.dnsServers, search: state.dnsSearch)
-        where runner.run(c).status != 0 {
-            log("DNS ayarlanamadı: \(c)")
-        }
+    private func applyDNS(_ settings: [DNSBackup]) {
+        do { try dns.apply(settings) } catch { log("DNS ayarlanamadı: \(describe(error))") }
     }
 
     private func describe(_ error: Error) -> String {

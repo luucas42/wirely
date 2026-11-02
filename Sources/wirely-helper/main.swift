@@ -31,6 +31,7 @@ func makeManager(runner: CommandRunner, wireguardGo: String, queue: DispatchQueu
         makeLauncher: { WireGuardGoLauncher(executable: wireguardGo, callbackQueue: queue) },
         resolver: SystemResolver(),
         store: FileStateStore(),
+        dns: SystemDNSConfigurator(),
         log: log.write)
 }
 
