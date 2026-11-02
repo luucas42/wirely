@@ -2,6 +2,9 @@ import SwiftUI
 import AppKit
 import WirelyCore
 
+private let previewHomeNetwork = NetworkInfo(interface: "en0", name: "home-wifi", address: "192.168.1.20", prefix: 24,
+                                             router: "192.168.1.1", isWiFi: true)
+
 /// QA hook: `Wirely --render-previews <dir>` renders the main states to PNGs and exits.
 /// Run it from the built `.app` binary so Manrope is found in the bundle.
 @MainActor
@@ -52,6 +55,9 @@ enum PreviewRenderer {
         var checked = false
         var sheet = false
         var route: RouteScenario?
+        var mode = AppMode.tunnel
+        var devices: DevicesScenario?
+        var lanBlocked: Bool?
         var size = CGSize(width: 920, height: 600)
     }
 
@@ -62,6 +68,67 @@ enum PreviewRenderer {
         var selected: Int?
         var target: String
         var reached = true
+    }
+
+    /// Devices-mode state for the full window.
+    private struct DevicesScenario {
+        var network: NetworkInfo? = previewHomeNetwork
+        var devices: [LANDevice]
+        var phase = ScanPhase.idle
+        var selected: MACAddress?
+        var permissionDenied = false
+        var lastScan: Date?
+    }
+
+    /// Does nothing: previews never scan.
+    private struct NullLANEnvironment: LANEnvironment {
+        func currentNetwork() async -> NetworkInfo? { nil }
+        func interfaceMAC(_ bsdName: String) async -> MACAddress? { nil }
+        func computerName() async -> String? { nil }
+        func sweep(network: NetworkInfo) async -> SweepResult { SweepResult(entries: [], denied: false) }
+        func bonjour() async -> [BonjourSighting] { [] }
+        func reverseNames(_ ips: [String]) async -> [String: String] { [:] }
+        func openPorts(ip: String, interface: String?) async -> [Int] { [] }
+        func vendors() async -> OUIDirectory? { nil }
+        func loadStore() async -> DeviceStore { DeviceStore() }
+        func saveStore(_ store: DeviceStore) async {}
+    }
+
+    private static func mac(_ last: Int) -> MACAddress { MACAddress(String(format: "a4:5e:60:00:00:%02x", last))! }
+
+    /// Sample devices (made-up names, documentation-style addresses, fake MAC suffixes); `extra` adds filler devices.
+    private static func sampleDevices(now: Date, extra: Int = 0, onlyBasics: Bool = false) -> [LANDevice] {
+        func day(_ d: Double) -> Date { now.addingTimeInterval(-86_400 * d) }
+        func dev(_ last: Int, _ ip: String, _ name: String, _ kind: DeviceKind, vendor: String?, first: Date,
+                 ports: [Int]? = nil, router: Bool = false, me: Bool = false, new: Bool = false) -> LANDevice {
+            var d = LANDevice(ip: ip, mac: mac(last), name: name, kind: kind, vendor: vendor, isRouter: router,
+                              isThisMac: me, isNew: new, firstSeen: first, lastSeen: now, openPorts: ports)
+            if vendor == nil, !new { d.mac = MACAddress(String(format: "a2:5e:60:00:00:%02x", last))! }
+            return d
+        }
+        var list = [
+            dev(1, "192.168.1.1", "Router", .router, vendor: "Huawei", first: day(400), ports: [80, 443], router: true),
+            dev(20, "192.168.1.20", "MacBook", .computer, vendor: "Apple", first: day(400), me: true),
+        ]
+        if onlyBasics { return list }
+        list += [
+            dev(34, "192.168.1.34", "iPhone", .phone, vendor: nil, first: day(90)),
+            dev(23, "192.168.1.23", "Living Room TV", .tv, vendor: "Samsung", first: day(150), ports: [8001, 9197]),
+            dev(40, "192.168.1.40", "HP LaserJet", .printer, vendor: "HP", first: day(365), ports: [80, 631, 9100]),
+            dev(51, "192.168.1.51", "Hue Bridge", .smartHome, vendor: "Philips", first: day(240), ports: [80, 443]),
+            dev(45, "192.168.1.45", "iPad", .tablet, vendor: "Apple", first: day(60)),
+            dev(37, "192.168.1.37", "Pixel 8", .phone, vendor: "Google", first: day(30)),
+            dev(71, "192.168.1.71", "Echo Dot", .speaker, vendor: "Amazon", first: day(180), ports: [8080]),
+            dev(62, "192.168.1.62", "Robot vacuum", .smartHome, vendor: "Xiaomi", first: day(120)),
+            dev(88, "192.168.1.88", "Unknown device", .unknown, vendor: nil, first: now.addingTimeInterval(-20),
+                ports: [22, 80], new: true),
+        ]
+        let names = ["Garage Camera", "Kitchen Display", "Bedroom TV", "Office Laptop", "Guest Phone", "Smart Plug",
+                     "Thermostat", "Desk Speaker", "NAS"]
+        for i in 0..<extra {
+            list.append(dev(100 + i, "192.168.1.\(100 + i)", names[i % names.count], .unknown, vendor: "Acme", first: day(Double(10 + i))))
+        }
+        return DeviceScanner.sorted(list)
     }
 
     /// Never reached: previews must not touch the network.
@@ -149,7 +216,13 @@ enum PreviewRenderer {
         route.setPreview(exit: s.exit ? frankfurt(now) : nil, ip: s.exit ? exitIP : nil, locating: s.locating,
                          latency: s.latency, selected: s.selected)
         let l10n = L10n(fixed: s.language)
-        let router = AppRouter()
+        let router = AppRouter(defaults: nil)
+        router.mode = s.mode
+        let scanner = DeviceScanner(env: NullLANEnvironment(), notify: { _, _ in }, defaults: UserDefaults(suiteName: "wirely-preview-\(UUID().uuidString)")!)
+        if let d = s.devices {
+            scanner.setPreview(network: d.network, devices: d.devices, phase: d.phase, selected: d.selected,
+                               lastScan: d.lastScan, permissionDenied: d.permissionDenied)
+        }
         if let section = s.settings { router.openSettings(section) }
         let updates = updateChecker(s)
         let trace = traceModel(s)
@@ -161,9 +234,13 @@ enum PreviewRenderer {
                 .environmentObject(l10n)
                 .environmentObject(router)
                 .environmentObject(updates)
-                .environmentObject(trace))
+                .environmentObject(trace)
+                .environmentObject(scanner))
         }
-        return AnyView(MainView(store: store, controller: controller, route: route)
+        var main = MainView(store: store, controller: controller, route: route)
+        main.lanBlockedOverride = s.lanBlocked ?? false
+        return AnyView(main
+            .environmentObject(scanner)
             .environmentObject(l10n)
             .environmentObject(router)
             .environmentObject(updates)
@@ -245,9 +322,37 @@ enum PreviewRenderer {
                      route: longNames, size: CGSize(width: 1200, height: 760)),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
+        let sampleList = sampleDevices(now: now)
+        let hue = sampleList.first { $0.name == "Hue Bridge" }?.mac
+        let fresh = sampleList.first { $0.isNew }?.mac
+        func devicesScenario(_ label: String, _ list: [LANDevice], selected: MACAddress? = nil, phase: ScanPhase = .idle,
+                             denied: Bool = false, lastScan: Date? = now.addingTimeInterval(-20), network: NetworkInfo? = previewHomeNetwork,
+                             size: CGSize = CGSize(width: 920, height: 600), blocked: Bool? = nil, status: TunnelStatus = .disconnected) -> Scenario {
+            Scenario(label: label, status: status, mode: .devices,
+                     devices: DevicesScenario(network: network, devices: list, phase: phase, selected: selected,
+                                              permissionDenied: denied, lastScan: lastScan),
+                     lanBlocked: blocked, size: size)
+        }
+        let deviceScenarios: [Scenario] = [
+            devicesScenario("devices", sampleList, selected: hue),
+            devicesScenario("devices-new", sampleList, selected: fresh),
+            devicesScenario("devices-scanning", [], phase: .scanning, lastScan: nil),
+            devicesScenario("devices-empty", sampleDevices(now: now, onlyBasics: true)),
+            devicesScenario("devices-offline", [], phase: .failed(L10n(fixed: .en)(.devicesOffline)), lastScan: nil, network: nil),
+            devicesScenario("devices-denied", sampleDevices(now: now, onlyBasics: true), denied: true),
+            devicesScenario("devices-killswitch", sampleDevices(now: now, onlyBasics: true), blocked: true, status: connected),
+            devicesScenario("devices-crowded", sampleDevices(now: now, extra: 9), selected: hue),
+            devicesScenario("devices-min", sampleList, selected: hue, size: CGSize(width: 820, height: 560)),
+            devicesScenario("devices-wide", sampleList, selected: hue, size: CGSize(width: 1200, height: 760)),
+            devicesScenario("devices-crowded-min", sampleDevices(now: now, extra: 9), selected: hue, size: CGSize(width: 820, height: 560)),
+            devicesScenario("devices-hidden", sampleDevices(now: now, extra: 9) + (0..<8).map { i in
+                LANDevice(ip: "192.168.1.\(200 + i)", mac: mac(200 + i), name: "Device \(i + 1)", kind: .unknown, vendor: "Acme",
+                          firstSeen: now.addingTimeInterval(-86_400), lastSeen: now)
+            }),
+        ]
 
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        for s in scenarios {
+        for s in scenarios + deviceScenarios {
             for scheme in [ColorScheme.light, .dark] {
                 render(s, scheme: scheme, now: now, into: directory)
             }
@@ -255,6 +360,10 @@ enum PreviewRenderer {
         var tr = Scenario(label: "connected-tr", status: connected, samples: true, latency: 46)
         tr.language = .tr
         render(tr, scheme: .dark, now: now, into: directory)
+        var devicesTR = deviceScenarios[0]
+        devicesTR.label = "devices-tr"
+        devicesTR.language = .tr
+        render(devicesTR, scheme: .dark, now: now, into: directory)
         var generalTR = Scenario(label: "settings-general-tr", settings: .general)
         generalTR.language = .tr
         render(generalTR, scheme: .dark, now: now, into: directory)

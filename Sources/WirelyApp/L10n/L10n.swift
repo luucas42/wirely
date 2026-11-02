@@ -78,6 +78,13 @@ enum L: String, CaseIterable {
     case errTraceInvalidTarget, errTraceResolve, errTraceIPv6, errTraceSocket, errTraceBusy
     // Devices
     case devicesOffline, unknownDevice, privateAddress, newDeviceTitle, newDevicesTitle
+    // Devices UI
+    case modeTunnel, modeDevices, devicesCount, devicesCountOne, lastScanLine, justNow
+    case devScan, devScanning, devNew, devThisMac, devIP, devVendor, devMAC, devFirstSeen
+    case devOpenPorts, devCheck, devChecking, devNone, devUnknownVendor, devPortsHint, devNoOthers
+    case devLANBlocked, devPermission, devOpenSettings, devOfflineBody, devScanAgain, devNotify, devNotifyHint
+    case kindRouter, kindComputer, kindPhone, kindTablet, kindTV, kindSpeaker, kindPrinter, kindSmartHome
+    case kindConsole, kindNAS, kindUnknown
 }
 
 final class L10n: ObservableObject {

@@ -28,11 +28,29 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the main window is about: the VPN tunnel or the devices on the local network.
+enum AppMode: String {
+    case tunnel, devices
+}
+
 /// Which page the main window shows: the route map or Settings (and which Settings section).
 @MainActor
 final class AppRouter: ObservableObject {
+    static let modeKey = "appMode"
+
     @Published var showingSettings = false
     @Published var section: SettingsSection = .profiles
+    /// Saved in `defaults` when the router was created with one (previews pass nil).
+    @Published var mode: AppMode {
+        didSet { if mode != oldValue { defaults?.set(mode.rawValue, forKey: Self.modeKey) } }
+    }
+
+    private let defaults: UserDefaults?
+
+    init(defaults: UserDefaults? = .standard) {
+        self.defaults = defaults
+        mode = defaults?.string(forKey: Self.modeKey).flatMap(AppMode.init(rawValue:)) ?? .tunnel
+    }
 
     func openSettings(_ section: SettingsSection? = nil) {
         if let section { self.section = section }

@@ -12,7 +12,11 @@ struct MainView: View {
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var updates: UpdateChecker
     @EnvironmentObject private var trace: TraceModel
+    @EnvironmentObject private var devices: DeviceScanner
     @Environment(\.previewMode) private var previewMode
+    @AppStorage(KillSwitchSettings.allowLANKey) private var allowLAN = true
+    /// Previews decide whether the kill switch blocks the local network; nil reads the real setting.
+    var lanBlockedOverride: Bool?
     @State private var importing = false
     @State private var editing: StoredTunnel?
     @State private var renaming: StoredTunnel?
@@ -93,7 +97,15 @@ struct MainView: View {
         } message: {
             Text(exportError ?? "")
         }
-        .onAppear { ensureSelection(preferConnected: true) }
+        .onAppear {
+            ensureSelection(preferConnected: true)
+            if router.mode == .devices, !previewMode { devices.devicesOpened() }
+        }
+        .onChange(of: router.mode) { mode in
+            guard mode == .devices else { return }
+            if trace.active { trace.close() }
+            if !previewMode { devices.devicesOpened() }
+        }
         .onChange(of: store.tunnels) { _ in ensureSelection(preferConnected: false) }
         .onChange(of: controller.status.state) { _ in ensureSelection(preferConnected: true) }
         .onChange(of: route.selectedName) { _ in if trace.active { trace.close() } }
@@ -130,33 +142,58 @@ struct MainView: View {
 
     private var mapPage: some View {
         VStack(spacing: 0) {
-            ProfileChips(tunnels: store.tunnels, selection: route.selectedName, status: controller.status,
-                         onSelect: { route.selectedName = $0 },
-                         onImport: { importing = true },
-                         onEdit: { editing = $0 },
-                         onRename: { renaming = $0 },
-                         onDelete: { deleting = $0 })
-                .padding(.horizontal, 80)
-                .overlay(alignment: .trailing) {
-                    IconButton(symbol: "gearshape", label: l10n(.settings)) { router.openSettings() }
-                        .padding(.trailing, 18)
-                }
-
-            mapArea
-                .padding(.horizontal, 40)
-                .frame(maxHeight: .infinity)
-
-            if trace.active {
-                RouteStripCard(trace: trace, fallbackTitle: route.exit?.city ?? selected?.name ?? "")
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .padding(.top, 4)
-            } else if let t = selected {
-                StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t })
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .padding(.top, 4)
+            header
+            switch router.mode {
+            case .tunnel: tunnelBody
+            case .devices:
+                DevicesView(lanBlocked: lanBlockedOverride ?? (controller.status.killSwitch == true && !allowLAN),
+                            onOpenConnectionSettings: { router.openSettings(.connection) })
             }
+        }
+    }
+
+    /// Mode switch after the traffic lights, the profile chips or the network pill in the middle, the gear.
+    private var header: some View {
+        HStack(spacing: 0) {
+            ModeSwitch(selection: $router.mode)
+                .padding(.leading, 80)
+            Group {
+                switch router.mode {
+                case .tunnel:
+                    ProfileChips(tunnels: store.tunnels, selection: route.selectedName, status: controller.status,
+                                 onSelect: { route.selectedName = $0 },
+                                 onImport: { importing = true },
+                                 onEdit: { editing = $0 },
+                                 onRename: { renaming = $0 },
+                                 onDelete: { deleting = $0 })
+                case .devices:
+                    NetworkPill(network: devices.network, scanning: devices.phase == .scanning)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .padding(.horizontal, 16)
+            IconButton(symbol: "gearshape", label: l10n(.settings)) { router.openSettings() }
+                .padding(.trailing, 18)
+        }
+        .frame(height: 58)
+    }
+
+    @ViewBuilder
+    private var tunnelBody: some View {
+        mapArea
+            .padding(.horizontal, 40)
+            .frame(maxHeight: .infinity)
+
+        if trace.active {
+            RouteStripCard(trace: trace, fallbackTitle: route.exit?.city ?? selected?.name ?? "")
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+                .padding(.top, 4)
+        } else if let t = selected {
+            StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t })
+                .padding(.horizontal, 24)
+                .padding(.bottom, 24)
+                .padding(.top, 4)
         }
     }
 

@@ -208,11 +208,28 @@ enum ScanPhase: Equatable {
 
     // MARK: Background
 
-    /// The user opened Devices: remember it, start background scans and scan now if nothing was scanned yet.
+    /// The user opened Devices: remember it, start background scans and scan now if nothing was scanned yet
+    /// or the last scan is older than a minute.
     func devicesOpened() {
         defaults.set(true, forKey: AppPreferences.devicesOpenedKey)
         startBackground()
-        if lastScan == nil, phase != .scanning { Task { await scan() } }
+        let stale = lastScan.map { now().timeIntervalSince($0) > Self.staleAfter } ?? true
+        if stale, phase != .scanning { Task { await scan() } }
+    }
+
+    /// Opening Devices rescans when the last scan is older than this many seconds.
+    static let staleAfter: TimeInterval = 60
+
+    /// Fixed state for previews; nothing is scanned.
+    func setPreview(network: NetworkInfo?, devices: [LANDevice], phase: ScanPhase = .idle, selected: MACAddress? = nil,
+                    lastScan: Date? = nil, permissionDenied: Bool = false, checking: Set<MACAddress> = []) {
+        self.network = network
+        self.devices = devices
+        self.phase = phase
+        self.selected = selected
+        self.lastScan = lastScan
+        self.permissionDenied = permissionDenied
+        self.checkingPorts = checking
     }
 
     /// Scans every 5 minutes. Only after Devices was opened once and while "Notify about new devices" is on.

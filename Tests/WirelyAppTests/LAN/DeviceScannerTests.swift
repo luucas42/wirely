@@ -22,6 +22,7 @@ private final class FakeEnv: LANEnvironment, @unchecked Sendable {
     private var _store = DeviceStore()
     private var _saved: [DeviceStore] = []
     private var _portCalls: [String] = []
+    private var _sweeps = 0
 
     var network: NetworkInfo? { get { lock.withLock { _network } } set { lock.withLock { _network = newValue } } }
     var entries: [ARPEntry] { get { lock.withLock { _entries } } set { lock.withLock { _entries = newValue } } }
@@ -30,17 +31,28 @@ private final class FakeEnv: LANEnvironment, @unchecked Sendable {
     var dns: [String: String] { get { lock.withLock { _dns } } set { lock.withLock { _dns = newValue } } }
     var saved: [DeviceStore] { lock.withLock { _saved } }
     var portCalls: [String] { lock.withLock { _portCalls } }
+    var sweeps: Int { lock.withLock { _sweeps } }
 
     func currentNetwork() async -> NetworkInfo? { network }
     func interfaceMAC(_ bsdName: String) async -> MACAddress? { thisMAC }
     func computerName() async -> String? { "Test Mac" }
-    func sweep(network: NetworkInfo) async -> SweepResult { SweepResult(entries: entries, denied: denied) }
+    func sweep(network: NetworkInfo) async -> SweepResult {
+        lock.withLock { _sweeps += 1 }
+        return SweepResult(entries: entries, denied: denied)
+    }
     func bonjour() async -> [BonjourSighting] { sightings }
     func reverseNames(_ ips: [String]) async -> [String: String] { dns.filter { ips.contains($0.key) } }
     func openPorts(ip: String, interface: String?) async -> [Int] { lock.withLock { _portCalls.append(ip) }; return [80, 443] }
     func vendors() async -> OUIDirectory? { OUIDirectory(tsv: "A45E60\tAcme\n") }
     func loadStore() async -> DeviceStore { lock.withLock { _store } }
     func saveStore(_ store: DeviceStore) async { lock.withLock { _saved.append(store) } }
+}
+
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _now = Date(timeIntervalSince1970: 1_000_000)
+    var now: Date { lock.withLock { _now } }
+    func advance(_ s: TimeInterval) { lock.withLock { _now = _now.addingTimeInterval(s) } }
 }
 
 private func entry(_ ip: String, _ mac: MACAddress) -> ARPEntry { ARPEntry(ip: ip, mac: mac) }
@@ -53,11 +65,12 @@ private final class Notes: @unchecked Sendable {
 }
 
 @MainActor
-private func make(_ env: FakeEnv, _ notes: Notes = Notes(), opened: Bool = false, notifyPref: Bool = true) -> DeviceScanner {
+private func make(_ env: FakeEnv, _ notes: Notes = Notes(), opened: Bool = false, notifyPref: Bool = true,
+                  now: @escaping () -> Date = Date.init) -> DeviceScanner {
     let d = UserDefaults(suiteName: "devices-test-\(UUID().uuidString)")!
     d.set(opened, forKey: AppPreferences.devicesOpenedKey)
     d.set(notifyPref, forKey: AppPreferences.notifyNewDevicesKey)
-    return DeviceScanner(env: env, notify: { notes.add($0, $1) }, defaults: d)
+    return DeviceScanner(env: env, notify: { notes.add($0, $1) }, now: now, defaults: d)
 }
 
 private func baseEntries() -> [ARPEntry] {
@@ -205,6 +218,27 @@ struct DeviceScannerTests {
         on.startBackground()   // idempotent
         on.stopBackground()
         #expect(!on.isBackgroundRunning)
+    }
+
+    @Test func openingDevicesRescansOnlyWhenStale() async throws {
+        let env = FakeEnv(); env.entries = baseEntries()
+        let clock = Clock()
+        let s = make(env, now: { clock.now })
+        func settle(_ sweeps: Int) async throws {
+            for _ in 0..<200 where env.sweeps != sweeps || s.phase == .scanning { try await Task.sleep(nanoseconds: 10_000_000) }
+        }
+        s.devicesOpened()
+        try await settle(1)
+        #expect(env.sweeps == 1)
+        clock.advance(30)
+        s.devicesOpened()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(env.sweeps == 1)   // fresh: no rescan
+        clock.advance(40)          // 70 s since the scan
+        s.devicesOpened()
+        try await settle(2)
+        #expect(env.sweeps == 2)
+        s.stopBackground()
     }
 
     @Test func openingDevicesStartsBackgroundAndScansOnce() async throws {

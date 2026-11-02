@@ -5,6 +5,8 @@ struct GeneralSection: View {
     @EnvironmentObject private var l10n: L10n
     @AppStorage("notificationsEnabled") private var notifications = true
     @AppStorage(AppPreferences.connectOnLaunchKey) private var connectOnLaunch = false
+    @AppStorage(AppPreferences.notifyNewDevicesKey) private var notifyNewDevices = true
+    @EnvironmentObject private var devices: DeviceScanner
     @State private var loginStatus = LoginItem.status
     @State private var loginError: String?
 
@@ -42,6 +44,7 @@ struct GeneralSection: View {
                     SegmentedPills(options: languages, selection: $l10n.language)
                 }
                 ToggleRow(title: l10n(.notifications), hint: l10n(.notificationsHint), isOn: $notifications)
+                ToggleRow(title: l10n(.devNotify), hint: l10n(.devNotifyHint), isOn: $notifyNewDevices)
                 loginRow
                 ToggleRow(title: l10n(.connectOnLaunch),
                           hint: AppPreferences.lastProfile.map { l10n.format(.connectOnLaunchHint, $0) }
@@ -50,6 +53,9 @@ struct GeneralSection: View {
             }
         }
         .onAppear { loginStatus = LoginItem.status }
+        .onChange(of: notifyNewDevices) { on in
+            if on { devices.startBackground() } else { devices.stopBackground() }
+        }
     }
 
     private var loginRow: some View {
