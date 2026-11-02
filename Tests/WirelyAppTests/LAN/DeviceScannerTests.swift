@@ -41,7 +41,7 @@ private final class FakeEnv: LANEnvironment, @unchecked Sendable {
         return SweepResult(entries: entries, denied: denied)
     }
     func bonjour() async -> [BonjourSighting] { sightings }
-    func reverseNames(_ ips: [String]) async -> [String: String] { dns.filter { ips.contains($0.key) } }
+    func reverseNames(_ ips: [String], router: String?, interface: String) async -> [String: String] { dns.filter { ips.contains($0.key) } }
     func openPorts(ip: String, interface: String?) async -> [Int] { lock.withLock { _portCalls.append(ip) }; return [80, 443] }
     func vendors() async -> OUIDirectory? { OUIDirectory(tsv: "A45E60\tAcme\n") }
     func loadStore() async -> DeviceStore { lock.withLock { _store } }
@@ -314,5 +314,67 @@ struct LANHelperTests {
     @Test func portListIsFixed() {
         #expect(PortCheck.ports.count == 18)
         #expect(PortCheck.ports.first == 22 && PortCheck.ports.last == 62078)
+    }
+}
+
+struct ReverseDNSPacketTests {
+    private static let qname: [UInt8] = [2, 0x32, 0x33, 1, 0x31, 3, 0x31, 0x36, 0x38, 3, 0x31, 0x39, 0x32, 7] + Array("in-addr".utf8)
+        + [4] + Array("arpa".utf8) + [0]   // 23.1.168.192.in-addr.arpa
+
+    private static func response(id: UInt16 = 0x1234, flags: [UInt8] = [0x81, 0x80], answer: [UInt8]) -> [UInt8] {
+        [UInt8(id >> 8), UInt8(id & 0xFF)] + flags + [0, 1, 0, 1, 0, 0, 0, 0] + qname + [0, 12, 0, 1] + answer
+    }
+
+    @Test func queryBytes() {
+        let q = ReverseDNS.ptrQuery(id: 0xABCD, ip: "192.168.1.23")
+        let expected: [UInt8] = [0xAB, 0xCD, 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0,
+                                 2, 0x32, 0x33, 1, 0x31, 3, 0x31, 0x36, 0x38, 3, 0x31, 0x39, 0x32, 7] + Array("in-addr".utf8)
+            + [4] + Array("arpa".utf8) + [0, 0, 12, 0, 1]
+        #expect(q == expected)
+        #expect(ReverseDNS.ptrQuery(id: 1, ip: "nope") == nil)
+        #expect(ReverseDNS.ptrQuery(id: 1, ip: "1.2.3") == nil)
+        #expect(ReverseDNS.ptrQuery(id: 1, ip: "1.2.3.999") == nil)
+    }
+
+    @Test func parsesACompressedAnswer() {
+        // Answer name is a pointer to the question (0xC00C); the PTR data is "tv" + a pointer to "in-addr.arpa" (offset 25).
+        let data: [UInt8] = [2, 0x74, 0x76, 0xC0, 25]
+        let answer: [UInt8] = [0xC0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, UInt8(data.count)] + data
+        let r = ReverseDNS.parsePTRResponse(Self.response(answer: answer))
+        #expect(r?.id == 0x1234)
+        #expect(r?.name == "tv.in-addr.arpa")
+    }
+
+    @Test func parsesAPlainAnswer() {
+        let name: [UInt8] = [11] + Array("living-room".utf8) + [5] + Array("local".utf8) + [0]
+        let answer: [UInt8] = [0xC0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, UInt8(name.count)] + name
+        let r = ReverseDNS.parsePTRResponse(Self.response(answer: answer))
+        #expect(r?.name == "living-room.local")
+        #expect(r.flatMap { ReverseDNS.clean($0.name, ip: "192.168.1.23") } == "living-room")
+    }
+
+    @Test func rejectsGarbageTruncationAndErrors() {
+        #expect(ReverseDNS.parsePTRResponse([]) == nil)
+        #expect(ReverseDNS.parsePTRResponse([1, 2, 3, 4, 5]) == nil)
+        #expect(ReverseDNS.parsePTRResponse(Array(repeating: 0xFF, count: 40)) == nil)
+        let data: [UInt8] = [2, 0x74, 0x76, 0]
+        let answer: [UInt8] = [0xC0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, UInt8(data.count)] + data
+        let full = Self.response(answer: answer)
+        #expect(ReverseDNS.parsePTRResponse(full) != nil)
+        for cut in [full.count - 1, full.count - 3, 30, 12] { #expect(ReverseDNS.parsePTRResponse(Array(full.prefix(cut))) == nil) }
+        #expect(ReverseDNS.parsePTRResponse(Self.response(flags: [0x81, 0x83], answer: answer)) == nil)   // NXDOMAIN
+        #expect(ReverseDNS.parsePTRResponse(Self.response(flags: [0x01, 0x00], answer: answer)) == nil)   // not a response
+    }
+
+    @Test func pointerLoopIsRejected() {
+        // The PTR data points at itself.
+        let rdataOffset = 12 + Self.qname.count + 4 + 12
+        let data: [UInt8] = [0xC0, UInt8(rdataOffset)]
+        let answer: [UInt8] = [0xC0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, UInt8(data.count)] + data
+        #expect(ReverseDNS.parsePTRResponse(Self.response(answer: answer)) == nil)
+    }
+
+    @Test func noRouterMeansNoQueries() async {
+        #expect(await ReverseDNS.names(for: ["192.168.1.23"], router: nil, interface: "en0").isEmpty)
     }
 }

@@ -87,7 +87,7 @@ enum PreviewRenderer {
         func computerName() async -> String? { nil }
         func sweep(network: NetworkInfo) async -> SweepResult { SweepResult(entries: [], denied: false) }
         func bonjour() async -> [BonjourSighting] { [] }
-        func reverseNames(_ ips: [String]) async -> [String: String] { [:] }
+        func reverseNames(_ ips: [String], router: String?, interface: String) async -> [String: String] { [:] }
         func openPorts(ip: String, interface: String?) async -> [Int] { [] }
         func vendors() async -> OUIDirectory? { nil }
         func loadStore() async -> DeviceStore { DeviceStore() }

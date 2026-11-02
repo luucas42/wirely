@@ -39,6 +39,7 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 - **Kill switch** — if the tunnel drops, all internet traffic is blocked until you reconnect or click *Allow internet*, so nothing slips out over your normal connection. On by default; printers, AirDrop and other local devices keep working. [More below](#kill-switch).
 - **Survives network changes** — Wi-Fi switches and sleep/wake re-point the server route automatically.
 - **Route on the map** — trace the path to your VPN server or any site in about a second: every stop on the map, the encrypted part and the open-internet part drawn differently, and the stop where latency jumps. [More below](#route-trace).
+- **Devices on your network** — a map of everything on your Wi-Fi or Ethernet with the router in the middle, with names, kinds and vendors, an open-port check on request, and a notification when a device you haven't seen before joins. [More below](#devices).
 - **Reconnects by itself** — if the tunnel drops, Wirely retries in the background (right away after sleep or when the network comes back) until it's up again.
 - **Settings that look like the app** — profiles (edit, rename, export, delete), connection, language, notifications, open at login and connect on launch, all on one page inside the window (⌘,).
 - **Tells you about updates** — once a day it checks GitHub for a new release and shows what's new in the app.
@@ -66,6 +67,7 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 3. **Install the service.** Click **Install service** in the app and enter your Mac password. You won't be asked again until the service is updated.
    - macOS may show *Background item added* — that's Wirely's service. It's listed in **System Settings → General → Login Items & Extensions**.
 4. **Add a profile** (drag a `.conf` into the window or click **Import**) and press **Connect**.
+5. **Local Network prompt.** The first time you open **Devices**, macOS asks whether Wirely may find devices on your local network. Click **Allow**; the VPN itself doesn't need it.
 
 > [!IMPORTANT]
 > Use one profile per person and device. WireGuard identifies peers by key: if the same profile is connected on two Macs, they keep knocking each other offline.
@@ -125,6 +127,17 @@ Press the route button next to ⓘ on the status card (Esc closes it).
 - Stops in the same city are merged, and the stop with the biggest latency increase is highlighted. Cities are approximate: routers are placed where their network is registered.
 - With the kill switch on, the probes to the VPN server and the routers' replies are let through; nothing else is.
 
+### Devices
+
+Switch to **Devices** at the top left. The router sits in the middle, every other device around it; click one for its details, or use the list on the right.
+
+- A scan sends one 1-byte UDP packet to every address in your subnet (at most the /24 around your Mac), then reads the system's ARP table (`/usr/sbin/arp -an`). A scan takes a few seconds.
+- Names and kinds come from Bonjour (a fixed list of service types) and reverse DNS from your router. Vendors come from the IEEE OUI table bundled in the app; a randomised ("private") MAC is shown as such.
+- The open-port check runs only when you click it, for one device: TCP connects to 18 common ports.
+- Known devices are stored per network in `~/Library/Application Support/Wirely/devices.json` (`0600`). The first scan of a network just learns what's there; after that, unknown devices are marked **New** until you click them.
+- After you've opened Devices once, Wirely rescans every 5 minutes while it's running and notifies you about new devices. Turn it off in **Settings → General → Notify about new devices**.
+- macOS asks once for Local Network access. If it's denied, Devices says so and links to **System Settings → Privacy & Security → Local Network**. With the kill switch on and **Allow local network** off, the local network is blocked and Devices tells you.
+
 ### Security and privacy
 
 - The socket only accepts the user who installed the service (checked with `getpeereid`) and root.
@@ -132,6 +145,7 @@ Press the route button next to ⓘ on the status card (Esc closes it).
 - Profiles are stored with `0600` permissions. Private keys never appear in the helper log (`/Library/Logs/Wirely/helper.log`).
 - **Update check:** once a day Wirely asks GitHub's API for the latest release (`api.github.com/repos/luucas42/wirely/releases/latest`); nothing about you or your profiles is sent. Turn it off in **Settings → About → Check automatically**.
 - **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. When you trace a route, the stops' public addresses (routers) are looked up the same way. Private addresses are never looked up.
+- **Device scans stay on your local network.** Nothing about your devices is sent anywhere, and there are no internet lookups for them.
 - DNS changes are applied only to real network services (Wi-Fi, Ethernet…), never to other VPN apps' services.
 
 ### Limitations

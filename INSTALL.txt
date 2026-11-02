@@ -23,6 +23,9 @@ WIRELY INSTALLATION
    button. A .zip made with "Export Tunnels to Zip" in the official WireGuard
    app can be imported too.
 
+   The first time you open "Devices", macOS asks to allow Local Network access;
+   click "Allow" (the VPN itself does not need it).
+
 5) The main window is a map: your city (from your Mac's time zone) to the
    server's city, with Distance / Latency / Download / Upload and a
    Connect/Disconnect button. The server's location is looked up once via

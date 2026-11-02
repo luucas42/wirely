@@ -7,7 +7,8 @@ protocol LANEnvironment: Sendable {
     func computerName() async -> String?
     func sweep(network: NetworkInfo) async -> SweepResult
     func bonjour() async -> [BonjourSighting]
-    func reverseNames(_ ips: [String]) async -> [String: String]
+    /// Names from the router's DNS only (never the system resolver).
+    func reverseNames(_ ips: [String], router: String?, interface: String) async -> [String: String]
     func openPorts(ip: String, interface: String?) async -> [Int]
     func vendors() async -> OUIDirectory?
     func loadStore() async -> DeviceStore
@@ -44,7 +45,9 @@ struct LiveLANEnvironment: LANEnvironment {
         await LANSweep.run(network: network, hosts: Subnet.hosts(address: network.address, prefix: network.prefix))
     }
     func bonjour() async -> [BonjourSighting] { await BonjourScout.browse() }
-    func reverseNames(_ ips: [String]) async -> [String: String] { await ReverseDNS.names(for: ips) }
+    func reverseNames(_ ips: [String], router: String?, interface: String) async -> [String: String] {
+        await ReverseDNS.names(for: ips, router: router, interface: interface)
+    }
     func openPorts(ip: String, interface: String?) async -> [Int] { await PortCheck.openPorts(ip: ip, interface: interface) }
     func vendors() async -> OUIDirectory? { await cache.get() }
     func loadStore() async -> DeviceStore { storeFile.load() }
@@ -130,7 +133,7 @@ enum ScanPhase: Equatable {
             entries.append(e)
         }
         let unnamed = entries.map(\.ip).filter { byIP[$0]?.name == nil }
-        let dns = await env.reverseNames(unnamed)
+        let dns = await env.reverseNames(unnamed, router: net.router, interface: net.interface)
 
         func build(ip: String, mac: MACAddress, name: String?) -> LANDevice {
             let sight = byIP[ip]
