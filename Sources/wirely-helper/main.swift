@@ -73,6 +73,10 @@ func runDaemon(_ args: [String]) -> Never {
             }
         case .down:
             return HelperResponse(ok: true, error: nil, status: manager.down(), helperVersion: version)
+        case .trace:
+            // Wired up with the raw-socket tracer.
+            return HelperResponse(ok: false, error: "trace unsupported", status: nil, helperVersion: version,
+                                  errorCode: "trace.socket")
         case .status, .version:
             return HelperResponse(ok: true, error: nil, status: manager.status(), helperVersion: version)
         }

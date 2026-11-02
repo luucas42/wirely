@@ -32,6 +32,10 @@ public enum KillSwitchPlan {
             guard let ip = IPAddress(ep.host) else { continue }
             let family = ip.family == .v4 ? "inet" : "inet6"
             lines.append("pass out quick \(family) proto udp from any to \(ip) port \(ep.port) keep state")
+            // Lets a route trace reach the server from outside the tunnel while everything else is blocked.
+            if ip.family == .v4 {
+                lines.append("pass out quick inet proto icmp from any to \(ip) icmp-type echoreq keep state")
+            }
         }
         // DHCP must keep working or the lease runs out and the physical link drops.
         lines.append("pass out quick inet proto udp from any port 68 to any port 67 keep state")
@@ -46,6 +50,9 @@ public enum KillSwitchPlan {
         if allowDNS {
             lines.append("pass out quick proto { udp tcp } from any to any port 53 keep state")
         }
+        // ICMP errors (TTL expired, unreachable) are harmless and answer our trace probes.
+        lines.append("pass in quick inet proto icmp from any to any icmp-type timex")
+        lines.append("pass in quick inet proto icmp from any to any icmp-type unreach")
         lines.append("block drop quick all")
         return lines.joined(separator: "\n") + "\n"
     }

@@ -87,3 +87,27 @@ private func tempSocketPath() -> String {
     let back = try JSONDecoder().decode(HelperResponse.self, from: JSONEncoder().encode(coded))
     #expect(back.errorCode == "resolve" && back.errorArg == "h")
 }
+
+@Test func requestAndResponseRoundTripTrace() throws {
+    let request = HelperRequest(command: .trace, traceTarget: "example.com")
+    let backRequest = try JSONDecoder().decode(HelperRequest.self, from: JSONEncoder().encode(request))
+    #expect(backRequest == request && backRequest.command == .trace && backRequest.traceTarget == "example.com")
+
+    let result = TraceResult(target: "example.com", address: "192.0.2.7",
+                             hops: [TraceHop(ttl: 1, address: "203.0.113.1", rttMs: 1.5, isDestination: false),
+                                    TraceHop(ttl: 2, address: nil, rttMs: nil, isDestination: false),
+                                    TraceHop(ttl: 3, address: "192.0.2.7", rttMs: 12.25, isDestination: true)],
+                             durationMs: 420, reached: true)
+    let response = HelperResponse(ok: true, error: nil, status: nil, helperVersion: HelperConstants.helperVersion,
+                                  trace: result)
+    let backResponse = try JSONDecoder().decode(HelperResponse.self, from: JSONEncoder().encode(response))
+    #expect(backResponse == response && backResponse.trace == result)
+    #expect(HelperConstants.helperVersion == 7)
+}
+
+@Test func traceFieldsAreOptionalWhenDecoding() throws {
+    let oldRequest = try JSONDecoder().decode(HelperRequest.self, from: Data(#"{"command":"status"}"#.utf8))
+    #expect(oldRequest.traceTarget == nil)
+    let oldResponse = try JSONDecoder().decode(HelperResponse.self, from: Data(#"{"ok":true,"helperVersion":6}"#.utf8))
+    #expect(oldResponse.trace == nil)
+}

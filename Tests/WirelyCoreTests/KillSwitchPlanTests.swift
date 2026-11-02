@@ -9,12 +9,15 @@ import Testing
     pass quick on lo0 all flags any keep state
     pass quick on utun7 all flags any keep state
     pass out quick inet proto udp from any to 203.0.113.5 port 51820 keep state
+    pass out quick inet proto icmp from any to 203.0.113.5 icmp-type echoreq keep state
     pass out quick inet proto udp from any port 68 to any port 67 keep state
     pass in quick inet proto udp from any port 67 to any port 68 keep state
     pass out quick inet from any to { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16, 224.0.0.0/4, 255.255.255.255 } flags any keep state
     pass in quick inet from { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16 } to any flags any keep state
     pass out quick inet6 from any to { fe80::/10, ff00::/8 } flags any keep state
     pass in quick inet6 from fe80::/10 to any flags any keep state
+    pass in quick inet proto icmp from any to any icmp-type timex
+    pass in quick inet proto icmp from any to any icmp-type unreach
     block drop quick all
 
     """)
@@ -28,6 +31,17 @@ import Testing
     #expect(!rules.contains("192.168.0.0/16"))
     #expect(!rules.contains("port 53"))
     #expect(rules.hasSuffix("block drop quick all\n"))
+}
+
+@Test func killSwitchAllowsTraceProbesOnlyToIPv4Endpoints() {
+    let rules = KillSwitchPlan.rules(iface: nil, endpoints: [Endpoint(host: "2001:db8::5", port: 443),
+                                                             Endpoint(host: "198.51.100.9", port: 1)],
+                                     allowLAN: false)
+    #expect(rules.contains("pass out quick inet proto icmp from any to 198.51.100.9 icmp-type echoreq keep state"))
+    #expect(!rules.contains("icmp from any to 2001:db8::5"))
+    let icmpIn = rules.range(of: "pass in quick inet proto icmp from any to any icmp-type unreach")!
+    let block = rules.range(of: "block drop quick all")!
+    #expect(icmpIn.upperBound <= block.lowerBound)
 }
 
 @Test func killSwitchInterimRulesAllowDNSBeforeTheBlock() throws {
