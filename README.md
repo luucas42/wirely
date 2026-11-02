@@ -38,6 +38,7 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 - **No leaks by default** — full-tunnel profiles route everything; if a profile has no IPv6 address, IPv6 is blocked instead of leaking around the tunnel.
 - **Kill switch** — if the tunnel drops, all internet traffic is blocked until you reconnect or click *Allow internet*, so nothing slips out over your normal connection. On by default; printers, AirDrop and other local devices keep working. [More below](#kill-switch).
 - **Survives network changes** — Wi-Fi switches and sleep/wake re-point the server route automatically.
+- **Route on the map** — trace the path to your VPN server or any site in about a second: every stop on the map, the encrypted part and the open-internet part drawn differently, and the stop where latency jumps. [More below](#route-trace).
 - **Reconnects by itself** — if the tunnel drops, Wirely retries in the background (right away after sleep or when the network comes back) until it's up again.
 - **Settings that look like the app** — profiles (edit, rename, export, delete), connection, language, notifications, open at login and connect on launch, all on one page inside the window (⌘,).
 - **Tells you about updates** — once a day it checks GitHub for a new release and shows what's new in the app.
@@ -89,7 +90,8 @@ From 1.2 on, Wirely tells you when a new version is out (**Settings → About** 
 │ profiles, map, UI    │ ◀───────────────────── │ ├─ wireguard-go  → utunN      │
 └──────────────────────┘   status every second  │ ├─ ifconfig / route (routes)  │
                                                 │ ├─ SystemConfiguration (DNS)  │
-                                                │ └─ pfctl (kill switch)        │
+                                                │ ├─ pfctl (kill switch)        │
+                                                │ └─ UDP probes (route trace)   │
                                                 └───────────────────────────────┘
 ```
 
@@ -110,13 +112,26 @@ Turn it on or off in **Settings → Connection** (on by default; changes apply t
 - If the tunnel drops (server gone, `wireguard-go` crashed, helper restarted), the rules stay and the app shows **Internet blocked**. **Reconnect** brings the tunnel back without opening a gap; **Allow internet** removes the block. Switching profiles keeps the block in place throughout.
 - **Disconnect** removes the rules. Wirely enables pf with its own reference (`pfctl -E`) and hands it back (`pfctl -X`), so pf stays on if something else turned it on.
 
+### Route trace
+
+<p align="center">
+  <img src="docs/images/route-dark.png" width="620" alt="Wirely tracing the route to example.com: stops from Istanbul through Sofia and Vienna to the VPN server in Frankfurt, then Amsterdam and London, with a metro-line strip of the stops and their latency">
+</p>
+
+Press the route button next to ⓘ on the status card (Esc closes it).
+
+- The helper sends UDP probes with TTL 1–30 a couple of milliseconds apart instead of one hop at a time, collects the routers' replies, and measures again once the path is known. A trace usually takes well under a second. ICMP bursts are avoided on purpose: some ISPs hold them back, which makes every hop look slow.
+- With a tunnel up, the part to your VPN server is traced **outside** the tunnel (the path your encrypted packets really take, in blue); the rest goes through the tunnel (grey). Type a site to trace past the server; with no tunnel, the trace goes straight to the site.
+- Stops in the same city are merged, and the stop with the biggest latency increase is highlighted. Cities are approximate: routers are placed where their network is registered.
+- With the kill switch on, the probes to the VPN server and the routers' replies are let through; nothing else is.
+
 ### Security and privacy
 
 - The socket only accepts the user who installed the service (checked with `getpeereid`) and root.
 - Every system command is run with an argument list, never through a shell. `PreUp` / `PostUp` / `PreDown` / `PostDown` lines in profiles are **ignored**, not executed.
 - Profiles are stored with `0600` permissions. Private keys never appear in the helper log (`/Library/Logs/Wirely/helper.log`).
 - **Update check:** once a day Wirely asks GitHub's API for the latest release (`api.github.com/repos/luucas42/wirely/releases/latest`); nothing about you or your profiles is sent. Turn it off in **Settings → About → Check automatically**.
-- **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. Private addresses are never looked up.
+- **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. When you trace a route, the stops' public addresses (routers) are looked up the same way. Private addresses are never looked up.
 - DNS changes are applied only to real network services (Wi-Fi, Ethernet…), never to other VPN apps' services.
 
 ### Limitations
@@ -181,6 +196,8 @@ Wirely is released under the [MIT License](LICENSE).
 > Her kişi kendi profilini kullanmalı: aynı profil iki Mac'te aynı anda bağlanırsa ikisi de bağlantıdan düşer.
 
 **Kill switch:** Tünel düşerse Wirely, sen **Yeniden bağlan** ya da **İnternete izin ver** diyene kadar tüm interneti engeller; böylece trafik normal bağlantından sızmaz. Varsayılan olarak açık, **Ayarlar → Bağlantı**'dan kapatabilirsin. Yazıcı, AirDrop gibi yerel ağdaki cihazlar çalışmaya devam eder (*Yerel ağa izin ver*). Engel sürerken Tailscale gibi diğer VPN'ler de engellenir; Mac yeniden başlarsa engel kalkar.
+
+**Rota izleme:** Durum kartındaki ⓘ'nin yanındaki rota düğmesine bas: VPN sunucuna ya da yazdığın siteye giden yol yaklaşık bir saniyede haritada çizilir. Şifreli kısım (senden VPN sunucuna) mavi, açık internet kısmı gri; gecikmenin en çok arttığı durak işaretlenir. Şehirler yaklaşıktır. Esc ile kapanır.
 
 **Otomatik yeniden bağlanma:** Tünel düşerse Wirely arka planda yeniden dener (uykudan uyanınca ya da internet geri gelince hemen). **Ayarlar → Bağlantı**'dan kapatılabilir.
 

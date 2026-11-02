@@ -42,6 +42,9 @@ WIRELY INSTALLATION
    General: open at login, connect when Wirely opens.
    About: Wirely checks GitHub once a day and tells you about new versions.
 
+9) Route trace: press the route button next to (i) on the status card to see
+   the path to your VPN server (or a site you type) on the map. Esc closes it.
+
 UPDATING from an older version: quit Wirely (menu bar icon -> Quit), drag
 the new Wirely onto "Applications" and choose "Replace". If the app says a
 service update is required, click "Update" and enter your Mac password.
@@ -97,6 +100,10 @@ TÜRKÇE
    Bağlantı: tünel düşerse otomatik yeniden bağlan (varsayılan açık).
    Genel: girişte aç, Wirely açılınca bağlan.
    Hakkında: Wirely günde bir kez GitHub'a bakar, yeni sürümü haber verir.
+
+8) Rota izleme: Durum kartındaki (i)'nin yanındaki rota düğmesine basın;
+   VPN sunucunuza (ya da yazdığınız siteye) giden yol haritada çizilir.
+   Esc ile kapanır.
 
 GÜNCELLEME (eski sürümden): Wirely'den çıkın (menü çubuğu simgesi → Çık),
 yeni Wirely'yi "Applications" klasörüne sürükleyip "Değiştir"i seçin.
