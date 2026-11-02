@@ -7,14 +7,17 @@ public final class HelperServer {
     private let socketPath: String
     private let allowedUIDs: Set<uid_t>
     private let queue: DispatchQueue
+    private let directCommands: Set<HelperCommand>
     private let handler: (HelperRequest) -> HelperResponse
     private var listenFD: Int32 = -1
 
     public init(socketPath: String, allowedUIDs: Set<uid_t>, queue: DispatchQueue,
+                directCommands: Set<HelperCommand> = [],
                 handler: @escaping (HelperRequest) -> HelperResponse) {
         self.socketPath = socketPath
         self.allowedUIDs = allowedUIDs
         self.queue = queue
+        self.directCommands = directCommands
         self.handler = handler
     }
 
@@ -60,7 +63,8 @@ public final class HelperServer {
             reply(fd, deny("Geçersiz istek", code: "request.invalid"))
             return
         }
-        let response = queue.sync { handler(request) }
+        // Direct commands (a trace) run on this connection's own thread so they never wait on the manager queue.
+        let response = directCommands.contains(request.command) ? handler(request) : queue.sync { handler(request) }
         reply(fd, response)
     }
 

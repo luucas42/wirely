@@ -6,7 +6,8 @@ import WirelyHelperKit
 let usage = """
 Kullanım:
   wirely-helper daemon --allowed-uid <uid> --wireguard-go <yol>
-  wirely-helper ctl status | down | up <conf-yolu> [--name N]
+  wirely-helper ctl status | down | up <conf-yolu> [--name N] | trace <hedef>
+  wirely-helper trace <hedef>
   wirely-helper cleanup
 """
 
@@ -50,8 +51,10 @@ func runDaemon(_ args: [String]) -> Never {
                               queue: managerQueue, log: fileLog)
     managerQueue.sync { manager.cleanupStale() }
 
+    let tracer = Tracer()
     let server = HelperServer(
-        socketPath: HelperConstants.socketPath, allowedUIDs: [uid_t(uid), 0], queue: managerQueue
+        socketPath: HelperConstants.socketPath, allowedUIDs: [uid_t(uid), 0], queue: managerQueue,
+        directCommands: [.trace]
     ) { request in
         let version = HelperConstants.helperVersion
         switch request.command {
@@ -74,9 +77,21 @@ func runDaemon(_ args: [String]) -> Never {
         case .down:
             return HelperResponse(ok: true, error: nil, status: manager.down(), helperVersion: version)
         case .trace:
-            // Wired up with the raw-socket tracer.
-            return HelperResponse(ok: false, error: "trace unsupported", status: nil, helperVersion: version,
-                                  errorCode: "trace.socket")
+            // Runs off the manager queue (directCommands): must not touch `manager`.
+            guard let target = request.traceTarget else {
+                return HelperResponse(ok: false, error: "Hedef eksik", status: nil, helperVersion: version,
+                                      errorCode: "trace.invalidTarget")
+            }
+            do {
+                let result = try tracer.trace(target)
+                fileLog.write("trace \(result.target): \(result.hops.count) hops, \(result.durationMs) ms")
+                return HelperResponse(ok: true, error: nil, status: nil, helperVersion: version, trace: result)
+            } catch {
+                let traceError = error as? TraceError
+                return HelperResponse(ok: false, error: error.localizedDescription, status: nil,
+                                      helperVersion: version, errorCode: traceError?.code ?? "trace.socket",
+                                      errorArg: traceError?.arg)
+            }
         case .status, .version:
             return HelperResponse(ok: true, error: nil, status: manager.status(), helperVersion: version)
         }
@@ -124,6 +139,9 @@ func runCtl(_ args: [String]) -> Never {
             fail("Yapılandırma dosyası okunamadı: \(path)")
         }
         request = HelperRequest(command: .up, tunnelName: name, config: text)
+    case "trace":
+        guard args.count >= 2 else { usageExit() }
+        request = HelperRequest(command: .trace, traceTarget: args[1])
     default:
         usageExit()
     }
@@ -133,11 +151,30 @@ func runCtl(_ args: [String]) -> Never {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
+        if let trace = response.trace, let out = try? encoder.encode(trace) {
+            print(String(decoding: out, as: UTF8.self))
+        }
         if let status = response.status, let out = try? encoder.encode(status) {
             print(String(decoding: out, as: UTF8.self))
         }
         if !response.ok { fail(response.error ?? "Bilinmeyen hata") }
         exit(0)
+    } catch {
+        fail(error.localizedDescription)
+    }
+}
+
+func runTrace(_ args: [String]) -> Never {
+    guard getuid() == 0 else { fail("wirely-helper trace root olarak çalışmalı (must run as root)") }
+    guard let target = args.first else { usageExit() }
+    do {
+        let result = try Tracer().trace(target)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        print(String(decoding: try encoder.encode(result), as: UTF8.self))
+        exit(0)
+    } catch let error as TraceError {
+        fail("\(error.code)" + (error.arg.map { ": \($0)" } ?? ""))
     } catch {
         fail(error.localizedDescription)
     }
@@ -157,6 +194,7 @@ let argv = Array(CommandLine.arguments.dropFirst())
 switch argv.first {
 case "daemon": runDaemon(Array(argv.dropFirst()))
 case "ctl": runCtl(Array(argv.dropFirst()))
+case "trace": runTrace(Array(argv.dropFirst()))
 case "cleanup": runCleanup()
 default: usageExit()
 }
