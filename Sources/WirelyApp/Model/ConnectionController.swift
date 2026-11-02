@@ -32,6 +32,9 @@ final class ConnectionController: ObservableObject {
 
     private let queue = DispatchQueue(label: "wirely.helper-client")
     private let client = HelperClient()
+    /// Traces get their own queue and client so a slow one never delays status polls.
+    private let traceQueue = DispatchQueue(label: "wirely.helper-trace")
+    private let traceClient = HelperClient(timeout: 10)
     private var timer: Timer?
     private var pollInFlight = false
     private var tickCount = 0
@@ -141,6 +144,31 @@ final class ConnectionController: ObservableObject {
                     cont.resume(returning: .failure(.io(error.localizedDescription)))
                 }
             }
+        }
+    }
+
+    /// Traces the route to `target` through the helper (own queue, 10 s timeout).
+    func trace(_ target: String) async -> Result<TraceResult, TraceFailure> {
+        let client = self.traceClient
+        let request = HelperRequest(command: .trace, traceTarget: target)
+        let outcome: Result<HelperResponse, HelperClientError> = await withCheckedContinuation { cont in
+            traceQueue.async {
+                do {
+                    cont.resume(returning: .success(try client.send(request)))
+                } catch let e as HelperClientError {
+                    cont.resume(returning: .failure(e))
+                } catch {
+                    cont.resume(returning: .failure(.io(error.localizedDescription)))
+                }
+            }
+        }
+        switch outcome {
+        case .success(let r):
+            if r.ok, let result = r.trace { return .success(result) }
+            return .failure(TraceFailure(code: r.errorCode, message: Self.describe(r, fallback: .genericError)))
+        case .failure(let e):
+            if e == .notRunning { helperState = .checking }
+            return .failure(TraceFailure(code: nil, message: L10n.shared.describe(e)))
         }
     }
 

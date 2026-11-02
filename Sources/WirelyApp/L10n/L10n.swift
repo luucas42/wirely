@@ -71,6 +71,11 @@ enum L: String, CaseIterable {
     // Store / installer errors
     case errUnsupportedFile, errZipOpen, errNoConfInZip, errProfileNotFound, errFileIO
     case errInstallCancelled, errInstallMissingFiles, errInstallFailed, errExitCode
+    // Route trace
+    case traceRoute, traceTarget, traceRun, traceAgain, traceClose, traceSummary, traceRunning
+    case traceVPNServer, traceEncryptedLeg, traceOpenLeg, traceStopsHere, traceJump
+    case traceNeedTarget, traceTargetSilent
+    case errTraceInvalidTarget, errTraceResolve, errTraceIPv6, errTraceSocket, errTraceBusy
 }
 
 final class L10n: ObservableObject {
@@ -160,6 +165,11 @@ final class L10n: ObservableObject {
         case "request.missingConfig": return self(.errMissingConfig)
         case "request.invalid": return self(.errInvalidRequest)
         case "auth": return self(.errAuth)
+        case "trace.invalidTarget": return self(.errTraceInvalidTarget)
+        case "trace.resolve": return format(.errTraceResolve, a)
+        case "trace.ipv6Unsupported": return self(.errTraceIPv6)
+        case "trace.socket": return format(.errTraceSocket, a)
+        case "trace.busy": return self(.errTraceBusy)
         default: return fallback ?? self(.genericError)
         }
     }

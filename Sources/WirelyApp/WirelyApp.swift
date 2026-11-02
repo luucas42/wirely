@@ -58,6 +58,7 @@ public struct WirelyApp: App {
     @StateObject private var store: TunnelStore
     @StateObject private var controller: ConnectionController
     @StateObject private var route: RouteModel
+    @StateObject private var trace: TraceModel
     @StateObject private var l10n = L10n.shared
     @StateObject private var router = AppRouter()
     @StateObject private var updates: UpdateChecker
@@ -71,6 +72,20 @@ public struct WirelyApp: App {
         c.exitCity = { [weak r] in MainActor.assumeIsolated { r?.exit?.city } }
         c.tunnelNamed = { [weak s] name in MainActor.assumeIsolated { s?.tunnels.first { $0.name == name } } }
         _route = StateObject(wrappedValue: r)
+        let locator = ExitLocator(http: URLSessionHTTPFetcher())
+        let t = TraceModel(
+            trace: { [weak c] target in
+                guard let c else { return .failure(TraceFailure(code: nil, message: L10n.shared(.genericError))) }
+                return await c.trace(target)
+            },
+            locate: { await locator.location(for: $0) },
+            context: { [weak r, weak c] in
+                MainActor.assumeIsolated {
+                    (home: r?.home, vpn: r?.exit, endpointHost: TraceModel.endpointHost(c?.status.endpoint),
+                     connected: c?.status.state == .connected, latencyMs: r?.latencyMs)
+                }
+            })
+        _trace = StateObject(wrappedValue: t)
         let current = AppVersion(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
             ?? AppVersion("0.0.0")!
         let u = UpdateChecker(current: current)
@@ -89,6 +104,7 @@ public struct WirelyApp: App {
                 .environmentObject(l10n)
                 .environmentObject(router)
                 .environmentObject(updates)
+                .environmentObject(trace)
                 .onAppear { controller.start() }
         }
         .commands {
