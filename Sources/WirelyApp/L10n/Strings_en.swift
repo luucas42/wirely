@@ -126,6 +126,7 @@ let stringsEN: [L: String] = [
     .serviceNotInstalled: "Not installed",
     .serviceChecking: "Starting…",
     .serviceOutdatedState: "Update required",
+    .connection: "Connection",
     .uninstallService: "Uninstall service",
     .openLog: "Open log",
     .version: "Version",

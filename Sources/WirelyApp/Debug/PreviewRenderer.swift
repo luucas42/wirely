@@ -47,6 +47,7 @@ enum PreviewRenderer {
         var language = AppLanguage.en
         var menuBar = false
         var reconnect: ReconnectStatus?
+        var settings: SettingsSection?
     }
 
     private static func store(for s: Scenario) -> TunnelStore {
@@ -87,12 +88,16 @@ enum PreviewRenderer {
         route.setPreview(exit: s.exit ? frankfurt(now) : nil, ip: s.exit ? exitIP : nil, locating: s.locating,
                          latency: s.latency, selected: s.selected)
         let l10n = L10n(fixed: s.language)
+        let router = AppRouter()
+        if let section = s.settings { router.openSettings(section) }
         if s.menuBar {
             return AnyView(MenuBarView(store: store, controller: controller, route: route)
-                .environmentObject(l10n))
+                .environmentObject(l10n)
+                .environmentObject(router))
         }
         return AnyView(MainView(store: store, controller: controller, route: route)
             .environmentObject(l10n)
+            .environmentObject(router)
             .frame(width: 920, height: 600))
     }
 
@@ -128,6 +133,8 @@ enum PreviewRenderer {
             Scenario(label: "invalid", profiles: ["home", "office"], broken: "broken", selected: "broken", exit: false),
             Scenario(label: "empty", profiles: [], selected: nil, exit: false),
             Scenario(label: "helper-setup", helper: .notInstalled),
+            Scenario(label: "settings-profiles", settings: .profiles),
+            Scenario(label: "settings-connection", settings: .connection),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
 

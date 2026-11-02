@@ -8,6 +8,7 @@ struct MenuBarView: View {
     @ObservedObject var controller: ConnectionController
     @ObservedObject var route: RouteModel
     @EnvironmentObject private var l10n: L10n
+    @EnvironmentObject private var router: AppRouter
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -34,8 +35,9 @@ struct MenuBarView: View {
                 NSApp.activate(ignoringOtherApps: true)
             }
             action(l10n(.settingsEllipsis)) {
+                openWindow(id: "main")
+                router.openSettings()
                 NSApp.activate(ignoringOtherApps: true)
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
             }
             action(l10n(.quit)) { NSApp.terminate(nil) }
         }

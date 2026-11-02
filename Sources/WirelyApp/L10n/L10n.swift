@@ -57,6 +57,7 @@ enum L: String, CaseIterable {
     // Profile details
     case address, dns, routes, allTraffic, mtu, mtuAuto, publicKey, ignoredKeysNote
     // Settings
+    case connection
     case general, service, about, serviceStatus, serviceReady, serviceNotInstalled, serviceChecking
     case serviceOutdatedState, uninstallService, openLog, version, credits
     // Updates

@@ -50,6 +50,7 @@ public struct WirelyApp: App {
     @StateObject private var controller: ConnectionController
     @StateObject private var route: RouteModel
     @StateObject private var l10n = L10n.shared
+    @StateObject private var router = AppRouter()
 
     public init() {
         let s = TunnelStore()
@@ -69,7 +70,13 @@ public struct WirelyApp: App {
             MainView(store: store, controller: controller, route: route)
                 .frame(minWidth: 820, minHeight: 560)
                 .environmentObject(l10n)
+                .environmentObject(router)
                 .onAppear { controller.start() }
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                SettingsCommandButton(router: router)
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
@@ -78,15 +85,26 @@ public struct WirelyApp: App {
         MenuBarExtra {
             MenuBarView(store: store, controller: controller, route: route)
                 .environmentObject(l10n)
+                .environmentObject(router)
                 .onAppear { controller.start() }
         } label: {
             Image(nsImage: MenuBarIcon.image(connected: controller.status.state == .connected))
         }
         .menuBarExtraStyle(.window)
+    }
+}
 
-        Settings {
-            SettingsView(controller: controller)
-                .environmentObject(l10n)
+/// The app menu's "Settings…" item (⌘,): opens the main window on the Settings page.
+private struct SettingsCommandButton: View {
+    let router: AppRouter
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button(L10n.shared(.settingsEllipsis)) {
+            openWindow(id: "main")
+            router.openSettings()
+            NSApp.activate(ignoringOtherApps: true)
         }
+        .keyboardShortcut(",", modifiers: .command)
     }
 }

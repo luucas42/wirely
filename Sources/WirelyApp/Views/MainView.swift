@@ -9,6 +9,7 @@ struct MainView: View {
     @ObservedObject var route: RouteModel
 
     @EnvironmentObject private var l10n: L10n
+    @EnvironmentObject private var router: AppRouter
     @Environment(\.previewMode) private var previewMode
     @State private var importing = false
     @State private var editing: StoredTunnel?
@@ -20,24 +21,11 @@ struct MainView: View {
     private var selected: StoredTunnel? { route.selected }
 
     var body: some View {
-        VStack(spacing: 0) {
-            ProfileChips(tunnels: store.tunnels, selection: route.selectedName, status: controller.status,
-                         onSelect: { route.selectedName = $0 },
-                         onImport: { importing = true },
-                         onEdit: { editing = $0 },
-                         onRename: { renaming = $0 },
-                         onDelete: { deleting = $0 })
-                .padding(.horizontal, 80)
-
-            mapArea
-                .padding(.horizontal, 40)
-                .frame(maxHeight: .infinity)
-
-            if let t = selected {
-                StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t })
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 24)
-                    .padding(.top, 4)
+        Group {
+            if router.showingSettings {
+                SettingsPage()
+            } else {
+                mapPage
             }
         }
         .background(Theme.ground.ignoresSafeArea())
@@ -92,6 +80,35 @@ struct MainView: View {
 
     private static let importTypes: [UTType] =
         [UTType(filenameExtension: "conf") ?? .data, .zip]
+
+    // MARK: Map page
+
+    private var mapPage: some View {
+        VStack(spacing: 0) {
+            ProfileChips(tunnels: store.tunnels, selection: route.selectedName, status: controller.status,
+                         onSelect: { route.selectedName = $0 },
+                         onImport: { importing = true },
+                         onEdit: { editing = $0 },
+                         onRename: { renaming = $0 },
+                         onDelete: { deleting = $0 })
+                .padding(.horizontal, 80)
+                .overlay(alignment: .trailing) {
+                    IconButton(symbol: "gearshape", label: l10n(.settings)) { router.openSettings() }
+                        .padding(.trailing, 18)
+                }
+
+            mapArea
+                .padding(.horizontal, 40)
+                .frame(maxHeight: .infinity)
+
+            if let t = selected {
+                StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t })
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .padding(.top, 4)
+            }
+    }
+    }
 
     // MARK: Map area
 

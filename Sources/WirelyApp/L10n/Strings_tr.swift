@@ -126,6 +126,7 @@ let stringsTR: [L: String] = [
     .serviceNotInstalled: "Kurulu değil",
     .serviceChecking: "Başlatılıyor…",
     .serviceOutdatedState: "Güncelleme gerekli",
+    .connection: "Bağlantı",
     .uninstallService: "Servisi kaldır",
     .openLog: "Günlüğü aç",
     .version: "Sürüm",
