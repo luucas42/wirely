@@ -15,6 +15,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let dir = PreviewRenderer.requestedDirectory() {
             PreviewRenderer.run(into: dir)
             NSApp.terminate(nil)
+            return
+        }
+        // Evaluated here so the launch Apple event is still current; starts menu-bar only.
+        if LoginItem.launchedAtLogin {
+            DispatchQueue.main.async {
+                NSApp.windows.filter { $0.identifier?.rawValue == "main" }.forEach { $0.close() }
+            }
         }
     }
 

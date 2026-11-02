@@ -98,6 +98,17 @@ final class TunnelStore: ObservableObject {
         tunnels = Self.sorted(tunnels.filter { $0.name != name } + [renamed])
     }
 
+    /// Writes a profile's text to `url` (atomic, owner-only) for backup or sharing.
+    func export(_ name: String, to url: URL) throws {
+        guard let tunnel = tunnels.first(where: { $0.name == name }) else { throw StoreError.notFound(name) }
+        do {
+            try tunnel.text.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            throw StoreError.io(error.localizedDescription)
+        }
+    }
+
     func delete(_ name: String) {
         try? FileManager.default.removeItem(at: fileURL(name))
         tunnels.removeAll { $0.name == name }
