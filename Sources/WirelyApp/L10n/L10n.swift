@@ -76,6 +76,8 @@ enum L: String, CaseIterable {
     case traceVPNServer, traceEncryptedLeg, traceOpenLeg, traceStopsHere, traceJump, traceNearCity, traceCDNNote
     case traceNeedTarget, traceTargetSilent
     case errTraceInvalidTarget, errTraceResolve, errTraceIPv6, errTraceSocket, errTraceBusy
+    // Devices
+    case devicesOffline, unknownDevice, privateAddress, newDeviceTitle, newDevicesTitle
 }
 
 final class L10n: ObservableObject {

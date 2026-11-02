@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var controller: ConnectionController?
     /// Set by `WirelyApp`; checked at launch and hourly (never while rendering previews).
     @MainActor static var updates: UpdateChecker?
+    /// Set by `WirelyApp`; background scans resume at launch only once the user has opened Devices.
+    @MainActor static var devices: DeviceScanner?
     private var updateTimer: Timer?
 
     @MainActor
@@ -23,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         AppDelegate.controller?.start()
+        AppDelegate.devices?.startBackground()
         if let updates = AppDelegate.updates {
             Task { await updates.checkIfDue() }
             updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
@@ -59,6 +62,7 @@ public struct WirelyApp: App {
     @StateObject private var controller: ConnectionController
     @StateObject private var route: RouteModel
     @StateObject private var trace: TraceModel
+    @StateObject private var devices: DeviceScanner
     @StateObject private var l10n = L10n.shared
     @StateObject private var router = AppRouter()
     @StateObject private var updates: UpdateChecker
@@ -91,6 +95,9 @@ public struct WirelyApp: App {
         let u = UpdateChecker(current: current)
         let notifier = Notifier()
         u.onNewRelease = { notifier.postUpdate($0, l10n: .shared) }
+        let d = DeviceScanner(notify: { found, network in notifier.postNewDevices(found, network: network, l10n: .shared) })
+        _devices = StateObject(wrappedValue: d)
+        AppDelegate.devices = d
         _updates = StateObject(wrappedValue: u)
         AppDelegate.store = s
         AppDelegate.controller = c
@@ -105,6 +112,7 @@ public struct WirelyApp: App {
                 .environmentObject(router)
                 .environmentObject(updates)
                 .environmentObject(trace)
+                .environmentObject(devices)
                 .onAppear { controller.start() }
         }
         .commands {

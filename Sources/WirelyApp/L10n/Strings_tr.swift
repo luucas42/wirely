@@ -199,4 +199,9 @@ let stringsTR: [L: String] = [
     .errTraceIPv6: "Yalnızca IPv6 olan siteler henüz izlenemiyor.",
     .errTraceSocket: "İzleme başlatılamadı: %@",
     .errTraceBusy: "Zaten bir izleme sürüyor.",
+    .devicesOffline: "Yerel bir ağa bağlı değilsin",
+    .unknownDevice: "Bilinmeyen cihaz",
+    .privateAddress: "Gizli MAC adresi",
+    .newDeviceTitle: "%@ ağında yeni cihaz",
+    .newDevicesTitle: "%2$@ ağında %1$d yeni cihaz",
 ]

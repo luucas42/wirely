@@ -199,4 +199,9 @@ let stringsEN: [L: String] = [
     .errTraceIPv6: "IPv6-only sites can't be traced yet.",
     .errTraceSocket: "The trace couldn't start: %@",
     .errTraceBusy: "A trace is already running.",
+    .devicesOffline: "Not connected to a local network",
+    .unknownDevice: "Unknown device",
+    .privateAddress: "Private address",
+    .newDeviceTitle: "New device on %@",
+    .newDevicesTitle: "%d new devices on %@",
 ]
