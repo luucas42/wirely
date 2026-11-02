@@ -46,6 +46,22 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
     }
 
+    /// "Wirely x.y.z is available" — posted once per version by `UpdateChecker.onNewRelease`.
+    func postUpdate(_ release: ReleaseInfo, l10n: L10n) {
+        guard available, enabled else { return }
+        let center = UNUserNotificationCenter.current()
+        if !authorizationRequested {
+            authorizationRequested = true
+            center.delegate = self
+            center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        }
+        let content = UNMutableNotificationContent()
+        content.sound = .default
+        content.title = l10n.format(.updateAvailableTitle, release.version.description)
+        content.body = l10n(.updateAvailableBody)
+        center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])

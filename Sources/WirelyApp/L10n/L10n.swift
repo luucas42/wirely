@@ -57,6 +57,9 @@ enum L: String, CaseIterable {
     // Settings
     case general, service, about, serviceStatus, serviceReady, serviceNotInstalled, serviceChecking
     case serviceOutdatedState, uninstallService, openLog, version, credits
+    // Updates
+    case updateAvailableTitle, updateAvailableBody, whatsNew, downloadUpdate, checkForUpdates, checkingForUpdates
+    case upToDate, updateCheckFailed, checkAutomatically, releaseNotes
     // Store / installer errors
     case errUnsupportedFile, errZipOpen, errNoConfInZip, errProfileNotFound, errFileIO
     case errInstallCancelled, errInstallMissingFiles, errInstallFailed, errExitCode

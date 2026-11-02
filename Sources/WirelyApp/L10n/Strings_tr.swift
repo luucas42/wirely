@@ -123,6 +123,17 @@ let stringsTR: [L: String] = [
     .version: "Sürüm",
     .credits: "wireguard-go © WireGuard LLC — MIT lisansı",
 
+    .updateAvailableTitle: "Wirely %@ çıktı",
+    .updateAvailableBody: "Yenilikler için Ayarlar → Hakkında.",
+    .whatsNew: "Yenilikler",
+    .downloadUpdate: "İndir",
+    .checkForUpdates: "Güncellemeleri denetle",
+    .checkingForUpdates: "Güncellemeler denetleniyor…",
+    .upToDate: "Wirely güncel.",
+    .updateCheckFailed: "Güncellemeler denetlenemedi.",
+    .checkAutomatically: "Otomatik denetle",
+    .releaseNotes: "Sürüm notları",
+
     .errUnsupportedFile: "%@: desteklenmeyen dosya türü",
     .errZipOpen: "%@: zip dosyası açılamadı",
     .errNoConfInZip: "%@: içinde .conf dosyası yok",

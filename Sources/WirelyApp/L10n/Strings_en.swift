@@ -123,6 +123,17 @@ let stringsEN: [L: String] = [
     .version: "Version",
     .credits: "wireguard-go © WireGuard LLC — MIT license",
 
+    .updateAvailableTitle: "Wirely %@ is available",
+    .updateAvailableBody: "See what's new in Settings → About.",
+    .whatsNew: "What's new",
+    .downloadUpdate: "Download",
+    .checkForUpdates: "Check for updates",
+    .checkingForUpdates: "Checking for updates…",
+    .upToDate: "You're up to date.",
+    .updateCheckFailed: "Couldn't check for updates.",
+    .checkAutomatically: "Check automatically",
+    .releaseNotes: "Release notes",
+
     .errUnsupportedFile: "%@: unsupported file type",
     .errZipOpen: "%@: could not open the zip file",
     .errNoConfInZip: "%@: no .conf file inside",
