@@ -8,6 +8,8 @@ import Foundation
 public enum KillSwitchPlan {
     public static let pfctl = "/sbin/pfctl"
     public static let anchor = "com.apple/250.Wirely"
+    /// Last destination port the kill switch lets a UDP trace probe use (the first is `TraceCollector.udpBasePort`).
+    public static let traceLastPort: UInt16 = 34000
 
     /// Destinations that stay reachable with "Allow local network".
     public static let lanV4 = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
@@ -32,9 +34,10 @@ public enum KillSwitchPlan {
             guard let ip = IPAddress(ep.host) else { continue }
             let family = ip.family == .v4 ? "inet" : "inet6"
             lines.append("pass out quick \(family) proto udp from any to \(ip) port \(ep.port) keep state")
-            // Lets a route trace reach the server from outside the tunnel while everything else is blocked.
+            // Lets a route trace (UDP probes) reach the server from outside the tunnel while everything else is blocked.
             if ip.family == .v4 {
-                lines.append("pass out quick inet proto icmp from any to \(ip) icmp-type echoreq keep state")
+                lines.append("pass out quick inet proto udp from any to \(ip) "
+                             + "port \(TraceCollector.udpBasePort):\(traceLastPort) keep state")
             }
         }
         // DHCP must keep working or the lease runs out and the physical link drops.

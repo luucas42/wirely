@@ -105,7 +105,8 @@ public enum ICMPCodec {
 }
 
 /// Collects the answers to parallel TTL probes (mtr-style) and turns them into hops. Pure state: times are
-/// passed in, so it has no clock. The probe sequence number encodes `round * 64 + ttl`.
+/// passed in, so it has no clock. The probe sequence number encodes `round * 64 + ttl`; for UDP probes it is
+/// the destination port minus `udpBasePort`.
 public struct TraceCollector {
     public let maxTTL: Int
     private var sentAt: [UInt16: TimeInterval] = [:]
@@ -115,6 +116,9 @@ public struct TraceCollector {
     public init(maxTTL: Int = 30) {
         self.maxTTL = maxTTL
     }
+
+    /// First destination port of a UDP probe; the probe's sequence number is added to it.
+    public static let udpBasePort: UInt16 = 33434
 
     /// Sequence number carried by the probe for `ttl` in `round`.
     public static func seq(ttl: Int, round: Int) -> UInt16 { UInt16(round * 64 + ttl) }

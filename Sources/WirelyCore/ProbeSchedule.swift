@@ -23,6 +23,10 @@ public struct ProbeSchedule {
     public let deadline: TimeInterval
     public let maxMeasureRounds: Int
 
+    /// Highest round number a schedule with `maxMeasureRounds` can send (rounds 0 and 1, then 2...), plus one
+    /// spare. Bounds the sequence numbers, and so the UDP destination ports, a trace can use.
+    public static func highestRound(maxMeasureRounds: Int = 6) -> Int { 1 + maxMeasureRounds + 1 }
+
     private var roundZeroSent = false
     private var roundOneSent = false
     private var measureCount = 0

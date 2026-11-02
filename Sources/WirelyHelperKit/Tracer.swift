@@ -42,7 +42,7 @@ public struct TraceOptions {
     /// Overall time budget in seconds.
     public var deadline: TimeInterval
 
-    public init(probe: ProbeKindChoice = .icmp, spacing: TimeInterval = 0.002, deadline: TimeInterval = 3.0) {
+    public init(probe: ProbeKindChoice = .udp, spacing: TimeInterval = 0.002, deadline: TimeInterval = 3.0) {
         self.probe = probe
         self.spacing = spacing
         self.deadline = deadline
@@ -51,7 +51,8 @@ public struct TraceOptions {
     public static let `default` = TraceOptions()
 }
 
-/// Parallel-TTL route tracer on a raw socket (needs root). One trace at a time.
+/// Parallel-TTL route tracer: UDP probes by default (ICMP echo is also supported), answers read from a raw
+/// ICMP socket (needs root). One trace at a time.
 public final class Tracer {
     private let lock = NSLock()
 
@@ -109,9 +110,6 @@ public final class Tracer {
         return String(cString: buf)
     }
 
-    /// First port a UDP probe is sent to; the probe's sequence number is added to it.
-    private static let udpBasePort: UInt16 = 33434
-
     /// A UDP socket bound to a random source port in 40000...60999, so replies can be matched to this trace.
     private static func makeUDPSocket() throws -> (fd: Int32, port: UInt16) {
         let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
@@ -153,7 +151,7 @@ public final class Tracer {
         if options.probe == .udp {
             let udp = try Self.makeUDPSocket()
             udpFd = udp.fd
-            probeKind = .udp(sourcePort: udp.port, basePort: Self.udpBasePort)
+            probeKind = .udp(sourcePort: udp.port, basePort: TraceCollector.udpBasePort)
         }
         defer { if udpFd >= 0 { close(udpFd) } }
 
@@ -177,7 +175,7 @@ public final class Tracer {
             var to = destination
             let packet: [UInt8]
             if udpFd >= 0 {
-                to.sin_port = (Self.udpBasePort + seq).bigEndian
+                to.sin_port = (TraceCollector.udpBasePort + seq).bigEndian
                 packet = [UInt8](repeating: 0x57, count: 12)
             } else {
                 packet = ICMPCodec.echoRequest(id: id, seq: seq, payload: payload)
