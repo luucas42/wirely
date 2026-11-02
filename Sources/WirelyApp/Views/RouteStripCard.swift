@@ -79,22 +79,29 @@ struct RouteStripCard: View {
 
     // MARK: Strip
 
+    private static let nameH: CGFloat = 16
+    private static let dotRowH: CGFloat = 18
+    private static let msH: CGFloat = 15
+    private static let gap: CGFloat = 6
+    private static let pillH: CGFloat = 20
+    /// Every row has a fixed height, so all dots (and the line through them) share one y.
+    private static let lineY = nameH + gap + dotRowH / 2
+    private static let msY = nameH + gap + dotRowH + gap
+    private static let stripH = msY + msH + gap + pillH
+
     @ViewBuilder
     private var strip: some View {
         if trace.phase == .done, !trace.stations.isEmpty {
             GeometryReader { geo in
                 let n = CGFloat(trace.stations.count)
-                let spacing = max(Self.minSpacing, min(Self.idealSpacing, geo.size.width / n))
-                let content = HStack(spacing: 0) {
-                    ForEach(Array(trace.stations.enumerated()), id: \.offset) { i, st in
-                        station(i, st, spacing: spacing)
-                    }
-                }
-                .frame(height: geo.size.height)
+                let spacing = min(120, max(Self.minSpacing, geo.size.width / n))
+                let content = stripContent(spacing: spacing)
+                    .frame(width: spacing * n, height: Self.stripH)
                 if spacing * n > geo.size.width + 0.5 && !previewMode {
                     ScrollView(.horizontal, showsIndicators: false) { content }
+                        .frame(height: geo.size.height)
                 } else {
-                    content.frame(width: geo.size.width, alignment: .leading)
+                    content.frame(width: geo.size.width, height: geo.size.height)
                 }
             }
         } else {
@@ -102,61 +109,60 @@ struct RouteStripCard: View {
         }
     }
 
-    private func station(_ i: Int, _ st: TraceStation, spacing: CGFloat) -> some View {
-        let selected = trace.selected == st.id
+    private func stripContent(spacing: CGFloat) -> some View {
         let stations = trace.stations
-        let prevLeg = i > 0 ? st.leg : nil
-        let nextLeg = i + 1 < stations.count ? stations[i + 1].leg : nil
+        return ZStack(alignment: .topLeading) {
+            // One continuous line behind the stations: cobalt 3 pt inside the tunnel, secondary 2 pt outside.
+            ForEach(Array(stations.enumerated()).dropFirst(), id: \.offset) { i, st in
+                let h: CGFloat = st.leg == .tunnel ? 3 : 2
+                Rectangle()
+                    .fill(st.leg == .tunnel ? Theme.cobalt : Theme.secondary)
+                    .frame(width: spacing, height: h)
+                    .offset(x: (CGFloat(i) - 0.5) * spacing, y: Self.lineY - h / 2)
+            }
+            HStack(spacing: 0) {
+                ForEach(Array(stations.enumerated()), id: \.offset) { _, st in
+                    station(st, spacing: spacing)
+                }
+            }
+            // Centered under the midpoint between the jump station and the one before it.
+            if let i = stations.firstIndex(where: { $0.jumpMs != nil }), i > 0, let j = stations[i].jumpMs {
+                jumpPill(j)
+                    .frame(width: spacing * 2)
+                    .offset(x: CGFloat(i - 1) * spacing, y: Self.msY + Self.msH + Self.gap)
+            }
+        }
+    }
+
+    private func station(_ st: TraceStation, spacing: CGFloat) -> some View {
+        let selected = trace.selected == st.id
         let ms = st.rttMs.map { "\(Int($0.rounded())) ms" } ?? "—"
-        let face = VStack(spacing: 6) {
+        let face = VStack(spacing: Self.gap) {
             Text(st.city)
                 .font(.mr(12.5, 800))
                 .foregroundStyle(selected ? Theme.ink : Theme.secondary)
-                .lineLimit(1).minimumScaleFactor(0.75)
-                .padding(.horizontal, 4)
-            ZStack {
-                HStack(spacing: 0) {
-                    line(prevLeg)
-                    line(nextLeg)
-                }
-                dot(st, selected: selected)
-            }
-            .frame(height: 18)
+                .lineLimit(1).truncationMode(.tail)
+                .frame(width: spacing - 6, height: Self.nameH)
+            dot(st, selected: selected).frame(height: Self.dotRowH)
             Text(ms)
                 .font(.mr(12, 600))
                 .foregroundStyle(st.jumpMs != nil ? Theme.signal : Theme.secondary)
                 .monospacedDigit().lineLimit(1)
-                .padding(.horizontal, 4)
-            // Reserved so every column lines up whether or not it carries a pill.
-            Color.clear.frame(height: 20)
+                .frame(height: Self.msH)
+            Color.clear.frame(height: Self.pillH)
         }
-        .frame(width: spacing)
-        .overlay(alignment: .bottomLeading) {
-            if let j = st.jumpMs, i > 0 { jumpPill(j).offset(x: -spacing / 2 + 2) }
-        }
+        .frame(width: spacing, height: Self.stripH, alignment: .top)
         .contentShape(Rectangle())
         return Group {
             if previewMode {
                 face
             } else {
-                Button { trace.selected = st.id } label: { face }.buttonStyle(.plain)
+                Button { trace.selected = st.id } label: { face }.buttonStyle(.plain).help(st.city)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(st.city), \(ms)")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
-    }
-
-    /// Half of the line through a station: cobalt 3 pt inside the tunnel, secondary 2 pt outside; empty at the ends.
-    @ViewBuilder
-    private func line(_ leg: TraceLegKind?) -> some View {
-        if let leg {
-            Rectangle()
-                .fill(leg == .tunnel ? Theme.cobalt : Theme.secondary)
-                .frame(height: leg == .tunnel ? 3 : 2)
-        } else {
-            Color.clear.frame(height: 2)
-        }
     }
 
     @ViewBuilder

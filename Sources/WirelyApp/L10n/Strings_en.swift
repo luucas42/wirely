@@ -188,6 +188,8 @@ let stringsEN: [L: String] = [
     .traceVPNServer: "Your VPN server",
     .traceEncryptedLeg: "Encrypted: you to your VPN server",
     .traceOpenLeg: "Open internet: server to target",
+    .traceNearCity: "≈ near %@",
+    .traceCDNNote: "Location unclear: probably a CDN server near the previous stop.",
     .traceStopsHere: "%d stops: your modem and provider",
     .traceJump: "%d ms, +%d ms from the previous stop",
     .traceNeedTarget: "Type a site or IP to trace.",

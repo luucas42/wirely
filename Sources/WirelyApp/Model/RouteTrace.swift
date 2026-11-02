@@ -33,11 +33,19 @@ struct TraceStation: Equatable, Identifiable {
     /// Extra milliseconds over the previous station; set on the one station with the biggest jump.
     var jumpMs: Double?
     var leg: TraceLegKind
+    /// The target's own location was physically impossible (an anycast/CDN address): it is drawn at the previous stop.
+    var locationNearPrevious = false
 }
 
 enum RouteStations {
     /// Smallest round-trip increase worth highlighting.
     static let jumpThresholdMs = 10.0
+
+    /// Light in fibre covers about 100 km per millisecond of round trip; the slack absorbs geolocation error.
+    static func isFeasible(from home: GeoPoint?, to point: GeoPoint, rttMs: Double?) -> Bool {
+        guard let home, let rttMs else { return true }
+        return Geo.distanceKm(home, point) <= rttMs * 100 + 300
+    }
 
     private static let nonPublicNets: [IPNetwork] = [
         "100.64.0.0/10", "169.254.0.0/16", "0.0.0.0/8",
@@ -85,14 +93,36 @@ enum RouteStations {
                                          jumpMs: nil, leg: leg))
         }
 
-        for (kind, result) in legs {
+        // The VPN server never answered the tunnel leg: its round trip is best read off the first public hops
+        // right behind it, else the tunnel's own latency.
+        let openRtt = legs.first { $0.kind == .open }?.result.hops
+            .filter { $0.address.map { !isNonPublic($0) } ?? false }
+            .prefix(3).compactMap(\.rttMs).min()
+        let serverRtt = openRtt ?? tunnelLatencyMs
+        let finalLeg = legs.last.flatMap { $0.kind == .tunnel ? nil : $0 }
+
+        for (legIndex, (kind, result)) in legs.enumerated() {
             var placedServer = false
-            for hop in result.hops {
+            for (hopIndex, hop) in result.hops.enumerated() {
                 let last = stations.count - 1
                 let isServer = kind == .tunnel && hop.isDestination
                 let loc: ExitLocation? = isServer
                     ? (vpn ?? hop.address.flatMap { locations[$0] })
                     : hop.address.flatMap { isNonPublic($0) ? nil : locations[$0] }
+                if let loc, !isServer, !isFeasible(from: home?.point, to: loc.point, rttMs: hop.rttMs) {
+                    // Impossible place for that round trip. The final stop of the trace is kept, drawn at the previous
+                    // stop; any other hop folds into the station before it.
+                    if finalLeg != nil, legIndex == legs.count - 1, hopIndex == result.hops.count - 1 {
+                        var near = TraceStation(id: 0, city: stations[last].city, countryCode: stations[last].countryCode,
+                                                point: stations[last].point, kind: .hop, hopCount: 1, address: hop.address,
+                                                rttMs: hop.rttMs, jumpMs: nil, leg: kind)
+                        near.locationNearPrevious = true
+                        stations.append(near)
+                    } else {
+                        fold(hop, into: last)
+                    }
+                    continue
+                }
                 guard let loc else {
                     fold(hop, into: last)
                     if isServer, stations[last].kind == .hop { stations[last].kind = .vpn; placedServer = true }
@@ -119,11 +149,11 @@ enum RouteStations {
                     stations[last].kind = .vpn
                     stations[last].countryCode = vpn.countryCode
                     stations[last].point = vpn.point
-                    if let ms = tunnelLatencyMs { stations[last].rttMs = ms }
+                    if let ms = serverRtt { stations[last].rttMs = ms }
                 } else {
                     stations.append(TraceStation(id: 0, city: vpn.city, countryCode: vpn.countryCode,
                                                  point: vpn.point, kind: .vpn, hopCount: 0, address: nil,
-                                                 rttMs: tunnelLatencyMs, jumpMs: nil, leg: .tunnel))
+                                                 rttMs: serverRtt, jumpMs: nil, leg: .tunnel))
                 }
             }
         }

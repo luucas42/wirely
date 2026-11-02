@@ -188,6 +188,8 @@ let stringsTR: [L: String] = [
     .traceVPNServer: "VPN sunucun",
     .traceEncryptedLeg: "Şifreli: senden VPN sunucuna",
     .traceOpenLeg: "Açık internet: sunucudan hedefe",
+    .traceNearCity: "≈ %@ yakınında",
+    .traceCDNNote: "Konum belirsiz: büyük ihtimalle önceki durağa yakın bir CDN sunucusu.",
     .traceStopsHere: "%d durak: modem ve sağlayıcın",
     .traceJump: "%d ms, öncekinden +%d ms",
     .traceNeedTarget: "İzlemek için bir site ya da IP yaz.",

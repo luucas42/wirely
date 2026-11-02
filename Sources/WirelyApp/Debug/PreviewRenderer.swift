@@ -52,6 +52,7 @@ enum PreviewRenderer {
         var checked = false
         var sheet = false
         var route: RouteScenario?
+        var size = CGSize(width: 920, height: 600)
     }
 
     /// Route-mode state for the full window.
@@ -60,6 +61,7 @@ enum PreviewRenderer {
         var stations: [TraceStation]
         var selected: Int?
         var target: String
+        var reached = true
     }
 
     /// Never reached: previews must not touch the network.
@@ -134,7 +136,8 @@ enum PreviewRenderer {
         if let r = s.route {
             let hops = max(0, r.stations.reduce(0) { $0 + $1.hopCount })
             t.setPreview(phase: r.phase, stations: r.stations, selected: r.selected, target: r.target,
-                         hopCount: hops, totalMs: r.stations.last?.rttMs.map { Int($0.rounded()) })
+                         hopCount: hops, totalMs: r.stations.last?.rttMs.map { Int($0.rounded()) },
+                         reached: r.reached)
         }
         return t
     }
@@ -165,7 +168,7 @@ enum PreviewRenderer {
             .environmentObject(router)
             .environmentObject(updates)
             .environmentObject(trace)
-            .frame(width: 920, height: 600))
+            .frame(width: s.size.width, height: s.size.height))
     }
 
     static func run(into directory: String) {
@@ -198,6 +201,8 @@ enum PreviewRenderer {
             return d
         }
 
+        let longNames = RouteScenario(phase: .done, stations: longNameStations(), selected: 4,
+                                      target: "leagueoflegends.com", reached: false)
         let scenarios: [Scenario] = [
             Scenario(label: "connected", status: connected, samples: true, latency: 46),
             Scenario(label: "connecting", status: connecting),
@@ -226,6 +231,16 @@ enum PreviewRenderer {
                                           target: "example.com")),
             Scenario(label: "route-running", status: connected, samples: true, latency: 46,
                      route: RouteScenario(phase: .running, stations: [], selected: nil, target: "example.com")),
+            Scenario(label: "route-connected-min", status: connected, samples: true, latency: 46,
+                     route: RouteScenario(phase: .done, stations: sample, selected: 2, target: "example.com"),
+                     size: CGSize(width: 820, height: 560)),
+            Scenario(label: "route-connected-wide", status: connected, samples: true, latency: 46,
+                     route: RouteScenario(phase: .done, stations: sample, selected: 2, target: "example.com"),
+                     size: CGSize(width: 1200, height: 760)),
+            Scenario(label: "route-long-names-min", status: connected, samples: true, latency: 46,
+                     route: longNames, size: CGSize(width: 820, height: 560)),
+            Scenario(label: "route-long-names-wide", status: connected, samples: true, latency: 46,
+                     route: longNames, size: CGSize(width: 1200, height: 760)),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
 
@@ -256,6 +271,22 @@ enum PreviewRenderer {
         write(AnyView(RouteMapView(home: istanbul, exit: frankfurt(now), exitIP: exitIP, phase: .connected)
             .environmentObject(l10n).padding(40).frame(width: 920, height: 600).background(Theme.ground)),
               label: "europe", scheme: .dark, into: directory)
+    }
+
+    /// A route that leaves Istanbul and comes back, with a long city name and a silent target.
+    private static func longNameStations() -> [TraceStation] {
+        func st(_ id: Int, _ city: String, _ cc: String, _ lat: Double, _ lon: Double, _ kind: TraceStationKind,
+                _ addr: String?, _ ms: Double, jump: Double? = nil, _ leg: TraceLegKind) -> TraceStation {
+            TraceStation(id: id, city: city, countryCode: cc, point: GeoPoint(lat: lat, lon: lon), kind: kind,
+                         hopCount: 2, address: addr, rttMs: ms, jumpMs: jump, leg: leg)
+        }
+        return [
+            st(0, "Istanbul", "TR", 41.01, 28.98, .home, nil, 10, .tunnel),
+            st(1, "Ankara", "TR", 39.93, 32.86, .hop, "198.51.100.12", 8, .tunnel),
+            st(2, "Istanbul", "TR", 41.00, 28.97, .hop, "198.51.100.30", 9, .tunnel),
+            st(3, "Frankfurt am Main", "DE", 50.11, 8.68, .vpn, "203.0.113.10", 49, .tunnel),
+            st(4, "Boardman", "US", 45.84, -119.70, .lastAnswer, "192.0.2.200", 188, jump: 139, .open),
+        ]
     }
 
     /// Sample route-mode stations for the map overlay (documentation addresses only).

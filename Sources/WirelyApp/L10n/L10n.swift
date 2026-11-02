@@ -73,7 +73,7 @@ enum L: String, CaseIterable {
     case errInstallCancelled, errInstallMissingFiles, errInstallFailed, errExitCode
     // Route trace
     case traceRoute, traceTarget, traceRun, traceAgain, traceClose, traceSummary, traceRunning
-    case traceVPNServer, traceEncryptedLeg, traceOpenLeg, traceStopsHere, traceJump
+    case traceVPNServer, traceEncryptedLeg, traceOpenLeg, traceStopsHere, traceJump, traceNearCity, traceCDNNote
     case traceNeedTarget, traceTargetSilent
     case errTraceInvalidTarget, errTraceResolve, errTraceIPv6, errTraceSocket, errTraceBusy
 }

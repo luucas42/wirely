@@ -21,7 +21,8 @@ struct TraceOverlayLayer: View {
     @EnvironmentObject private var l10n: L10n
 
     private static let bend: CGFloat = 0.10
-    private static let chipSize = CGSize(width: 196, height: 88)
+    private static let chipMaxWidth: CGFloat = 240
+    private static let chipPad = CGSize(width: 14, height: 11)
     private static let legendSize = CGSize(width: 262, height: 58)
 
     private var points: [CGPoint] { trace.stations.map { frame.project($0.point) } }
@@ -36,15 +37,17 @@ struct TraceOverlayLayer: View {
 
     var body: some View {
         let pts = points
-        let labels = placeLabels(pts)
+        let hidden = hiddenLabels(pts)
+        let labels = placeLabels(pts, hidden: hidden)
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in draw(ctx, pts) }
             ForEach(Array(trace.stations.enumerated()), id: \.offset) { i, st in
-                label(st, anchor: pts[i], rect: labels[i])
+                if hidden.contains(i) == false { label(st, anchor: pts[i], rect: labels[i]) }
             }
             if let sel = trace.selected, trace.stations.indices.contains(sel) {
-                chip(trace.stations[sel], rect: LabelPlacer.placeChip(
-                    anchor: pts[sel], size: Self.chipSize, allAnchors: pts, bounds: bounds,
+                let content = chipContent(trace.stations[sel])
+                chip(content, rect: LabelPlacer.placeChip(
+                    anchor: pts[sel], size: content.size, allAnchors: pts, bounds: bounds,
                     obstacles: labels + trace.avoid + (showsLegend ? [legendRect] : []) + legBoxes(pts)))
             }
             if showsLegend { legend.offset(x: legendRect.minX, y: legendRect.minY) }
@@ -136,8 +139,24 @@ struct TraceOverlayLayer: View {
         }
     }
 
-    private func placeLabels(_ pts: [CGPoint]) -> [CGRect] {
-        let sizes = trace.stations.map { LabelPlacer.estimate(title: $0.city, subtitle: subtitle($0)) }
+    /// Stations whose label is skipped: an earlier labelled station with the same city lies within 48 pt
+    /// (the route leaves a city and comes back). The home label always stays.
+    private func hiddenLabels(_ pts: [CGPoint]) -> Set<Int> {
+        var hidden = Set<Int>()
+        for i in pts.indices where trace.stations[i].kind != .home {
+            let twin = (0..<i).contains { j in
+                !hidden.contains(j) && trace.stations[j].city == trace.stations[i].city
+                    && hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y) < 48
+            }
+            if twin { hidden.insert(i) }
+        }
+        return hidden
+    }
+
+    private func placeLabels(_ pts: [CGPoint], hidden: Set<Int>) -> [CGRect] {
+        let sizes = trace.stations.enumerated().map { i, s in
+            hidden.contains(i) ? CGSize.zero : LabelPlacer.estimate(title: s.city, subtitle: subtitle(s))
+        }
         return LabelPlacer.place(anchors: pts, sizes: sizes, bounds: bounds,
                                  avoid: trace.avoid + (showsLegend ? [legendRect] : []) + legBoxes(pts))
     }
@@ -162,35 +181,70 @@ struct TraceOverlayLayer: View {
         return Locale(identifier: l10n.locale.identifier).localizedString(forRegionCode: code)
     }
 
-    private func chip(_ s: TraceStation, rect: CGRect) -> some View {
+    private struct ChipLine: Identifiable {
+        enum Style { case title, detail, jump, ms, note }
+        let id: Int
+        let text: String
+        let style: Style
+        var size: CGFloat {
+            switch style { case .title: return 13.5; case .detail, .ms, .jump: return 12; case .note: return 11 }
+        }
+    }
+
+    private struct ChipContent {
+        var lines: [ChipLine]
+        var size: CGSize
+    }
+
+    /// The chip's text lines and an estimated size: lines wrap (never truncate), so the height follows the wrapped count.
+    private func chipContent(_ s: TraceStation) -> ChipContent {
+        var texts: [(String, ChipLine.Style)] = []
         var title = (s.kind == .hop ? "≈ " : "") + s.city
         if let c = countryName(s.countryCode) { title += ", " + c }
-        let line1: String?
+        texts.append((title, .title))
         switch s.kind {
-        case .home: line1 = s.hopCount > 0 ? l10n.format(.traceStopsHere, s.hopCount) : nil
-        case .vpn: line1 = [l10n(.traceVPNServer), s.address].compactMap { $0 }.joined(separator: ", ")
-        case .target, .lastAnswer: line1 = [trace.targetName, s.address ?? ""].filter { !$0.isEmpty }.joined(separator: ", ")
-        case .hop: line1 = s.address
+        case .home: if s.hopCount > 0 { texts.append((l10n.format(.traceStopsHere, s.hopCount), .detail)) }
+        case .vpn:
+            texts.append((l10n(.traceVPNServer), .detail))
+            if let a = s.address { texts.append((a, .detail)) }
+        case .target, .lastAnswer:
+            if !trace.targetName.isEmpty { texts.append((trace.targetName, .detail)) }
+            if let a = s.address { texts.append((a, .detail)) }
+        case .hop: if let a = s.address { texts.append((a, .detail)) }
         }
-        var line2: String?
-        var jump = false
         if let ms = s.rttMs {
-            if let j = s.jumpMs { line2 = l10n.format(.traceJump, Int(ms.rounded()), Int(j.rounded())); jump = true }
-            else { line2 = "\(Int(ms.rounded())) ms" }
+            if let j = s.jumpMs { texts.append((l10n.format(.traceJump, Int(ms.rounded()), Int(j.rounded())), .jump)) }
+            else { texts.append(("\(Int(ms.rounded())) ms", .ms)) }
         }
-        return VStack(alignment: .leading, spacing: 3) {
-            Text(title).font(.mr(13.5, 800)).foregroundStyle(Theme.ink)
-            if let line1, !line1.isEmpty { Text(line1).font(.mr(12, 600)).foregroundStyle(Theme.secondary) }
-            if let line2 {
-                Text(line2).font(.mr(12, 700)).foregroundStyle(jump ? Theme.signal : Theme.chipIdleText)
-                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
-            }
-            if s.kind == .lastAnswer {
-                Text(l10n(.traceTargetSilent)).font(.mr(11, 600)).foregroundStyle(Theme.secondary)
+        if s.kind == .lastAnswer { texts.append((l10n(.traceTargetSilent), .note)) }
+        let lines = texts.enumerated().map { ChipLine(id: $0.offset, text: $0.element.0, style: $0.element.1) }
+
+        func charWidth(_ l: ChipLine) -> CGFloat { l.size * 0.58 }
+        let widest = lines.map { CGFloat($0.text.count) * charWidth($0) }.max() ?? 0
+        let width = min(Self.chipMaxWidth, max(150, ceil(widest) + 2 * Self.chipPad.width + 4))
+        let textWidth = width - 2 * Self.chipPad.width
+        var height = 2 * Self.chipPad.height
+        for l in lines {
+            let perLine = max(1, floor(textWidth / charWidth(l)))
+            let count = max(1, ceil(CGFloat(l.text.count) / perLine))
+            height += count * (l.size + 5)
+        }
+        height += CGFloat(max(0, lines.count - 1)) * 3
+        return ChipContent(lines: lines, size: CGSize(width: width, height: ceil(height) + 4))
+    }
+
+    private func chip(_ c: ChipContent, rect: CGRect) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(c.lines) { l in
+                Text(l.text)
+                    .font(.mr(l.size, l.style == .title ? 800 : l.style == .note ? 600 : 700))
+                    .foregroundStyle(l.style == .title ? Theme.ink : l.style == .jump ? Theme.signal
+                                     : l.style == .ms ? Theme.chipIdleText : Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .lineLimit(1)
-        .padding(.horizontal, 14).padding(.vertical, 11)
+        .padding(.horizontal, Self.chipPad.width).padding(.vertical, Self.chipPad.height)
         .frame(width: rect.width, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: 12).fill(Theme.card))
         .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.hairline, lineWidth: 1))
