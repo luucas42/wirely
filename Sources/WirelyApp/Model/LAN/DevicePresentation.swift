@@ -21,6 +21,7 @@ extension DeviceKind {
         case .computer: return l10n(.kindComputer)
         case .phone: return l10n(.kindPhone)
         case .tablet: return l10n(.kindTablet)
+        case .watch: return l10n(.kindWatch)
         case .tv: return l10n(.kindTV)
         case .speaker: return l10n(.kindSpeaker)
         case .printer: return l10n(.kindPrinter)

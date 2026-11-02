@@ -4,17 +4,15 @@ import Darwin
 /// Host names for local addresses, asked from the router only. Nothing goes to the system's resolvers: while a
 /// tunnel is up those are the VPN's DNS servers on the internet, and they cannot answer for 192.168.x.x anyway.
 enum ReverseDNS {
-    private static let suffixes = [".home.arpa", ".localdomain", ".local", ".lan", ".home"]
-
-    /// Drops a trailing dot and the local suffixes; nil when nothing is left or the name is just the address.
+    /// The host name only: a router answers with the device's DHCP name plus its own domain
+    /// ("Kitchen-Plug.lan"), so everything after the first dot is dropped. Nil when nothing is left or
+    /// the name is just the address.
     static func clean(_ name: String, ip: String) -> String? {
         var n = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if n.hasSuffix(".") { n.removeLast() }
-        for s in suffixes where n.lowercased().hasSuffix(s) {
-            n = String(n.dropLast(s.count))
-            break
-        }
-        return n.isEmpty || n == ip ? nil : n
+        if n == ip { return nil }
+        let first = n.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? ""
+        return first.isEmpty ? nil : first
     }
 
     // MARK: Packets

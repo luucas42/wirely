@@ -74,6 +74,25 @@ struct DeviceClassifierTests {
         #expect(kind(name: "DiskStation") == .nas)
     }
 
+    @Test func watches() {
+        #expect(kind(model: "Watch6,1") == .watch)
+        #expect(kind(name: "Watch") == .watch)
+        #expect(kind(name: "Apple-Watch") == .watch)
+        #expect(kind(name: "applewatch") == .watch)
+        // a randomised address would otherwise fall back to phone
+        #expect(kind(mac: "a2:11:22:33:44:55", name: "Watch") == .watch)
+        #expect(kind(mac: "a2:11:22:33:44:55", model: "Watch6,1") == .watch)
+    }
+
+    @Test func moreSmartHome() {
+        #expect(kind(vendor: "Hangzhou BroadLink") == .smartHome)
+        #expect(kind(vendor: "broadlink") == .smartHome)
+        for name in ["Wellbeing-Test", "Bedroom-Aircon", "Salon klima", "Air Purifier", "Hall Thermostat"] {
+            #expect(kind(name: name) == .smartHome, "\(name)")
+        }
+        #expect(kind(mac: "a2:11:22:33:44:55", name: "Bedroom-Aircon") == .smartHome)
+    }
+
     @Test func modelBeatsNameHint() {
         #expect(kind(model: "iPad13,4", name: "Living Room TV") == .tablet)
     }

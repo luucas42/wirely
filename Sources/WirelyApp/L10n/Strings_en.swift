@@ -242,5 +242,6 @@ let stringsEN: [L: String] = [
     .kindSmartHome: "Smart home",
     .kindConsole: "Game console",
     .kindNAS: "Network storage",
+    .kindWatch: "Watch",
     .kindUnknown: "Unknown",
 ]

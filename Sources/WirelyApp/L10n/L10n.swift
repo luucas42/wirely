@@ -84,7 +84,7 @@ enum L: String, CaseIterable {
     case devOpenPorts, devCheck, devChecking, devNone, devUnknownVendor, devPortsHint, devNoOthers
     case devLANBlocked, devPermission, devOpenSettings, devOfflineBody, devScanAgain, devNotify, devNotifyHint
     case kindRouter, kindComputer, kindPhone, kindTablet, kindTV, kindSpeaker, kindPrinter, kindSmartHome
-    case kindConsole, kindNAS, kindUnknown
+    case kindConsole, kindNAS, kindWatch, kindUnknown
 }
 
 final class L10n: ObservableObject {

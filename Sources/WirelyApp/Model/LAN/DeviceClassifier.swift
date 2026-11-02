@@ -5,7 +5,7 @@ import Foundation
 /// Pure rules, first match wins:
 /// 1. the router's address is `router`; this Mac's own address is `computer`
 ///    (the scanner sets `LANDevice.isRouter` / `isThisMac` from the same two comparisons);
-/// 2. the Bonjour `_device-info` model (`iPhone…`, `iPad…`, `AppleTV…`, `Mac…`, `AudioAccessory…`);
+/// 2. the Bonjour `_device-info` model (`iPhone…`, `iPad…`, `Watch…`, `AppleTV…`, `Mac…`, `AudioAccessory…`);
 /// 3. printer services;
 /// 4. services that name the kind outright (`_sonos`, `_amzn-wplay`, `_hue`);
 /// 5. hints in the name (iphone, ipad, galaxy tab, tv, playstation, nas, …);
@@ -22,7 +22,7 @@ enum DeviceClassifier {
                                     "roku", "vizio", "toshiba"]
     /// Makers of TVs only; their address alone is enough.
     private static let tvOnlyVendors = ["roku", "vizio", "vestel", "tcl", "hisense"]
-    private static let smartHomeVendors = ["signify", "philips lighting", "xiaomi", "tuya", "espressif", "shelly", "ikea", "sonoff"]
+    private static let smartHomeVendors = ["signify", "philips lighting", "xiaomi", "tuya", "espressif", "shelly", "ikea", "sonoff", "broadlink"]
     private static let nasVendors = ["synology", "qnap", "western digital"]
     private static let consoleVendors = ["nintendo", "sony interactive"]
 
@@ -54,6 +54,7 @@ enum DeviceClassifier {
     }
 
     private static func kind(forModel model: String) -> DeviceKind? {
+        if model.hasPrefix("Watch") { return .watch }
         if model.hasPrefix("iPhone") { return .phone }
         if model.hasPrefix("iPad") { return .tablet }
         if model.hasPrefix("AppleTV") { return .tv }
@@ -67,6 +68,7 @@ enum DeviceClassifier {
         let n = name.lowercased()
         let tokens = Set(n.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
         func has(_ words: String...) -> Bool { words.contains { n.contains($0) } }
+        if has("applewatch", "watch") { return .watch }
         if has("ipad", "galaxy tab") { return .tablet }
         if has("iphone", "android", "galaxy", "pixel") { return .phone }
         if has("macbook", "imac", "macmini", "mac-mini", "mac mini") { return .computer }
@@ -74,7 +76,7 @@ enum DeviceClassifier {
         if has("playstation", "xbox", "nintendo") || !tokens.isDisjoint(with: ["ps4", "ps5"]) { return .console }
         if has("synology", "diskstation") || tokens.contains("nas") { return .nas }
         if has("echo", "alexa", "homepod", "sonos") { return .speaker }
-        if has("vacuum", "roomba") || tokens.contains("hue") { return .smartHome }
+        if has("vacuum", "roomba", "wellbeing", "aircon", "klima", "purifier", "thermostat") || tokens.contains("hue") { return .smartHome }
         if has("bravia", "chromecast", "roku", "appletv") || tokens.contains("tv") || n.hasSuffix("tv") { return .tv }
         return nil
     }

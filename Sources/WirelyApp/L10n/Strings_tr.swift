@@ -242,5 +242,6 @@ let stringsTR: [L: String] = [
     .kindSmartHome: "Akıllı ev",
     .kindConsole: "Oyun konsolu",
     .kindNAS: "Ağ depolama",
+    .kindWatch: "Saat",
     .kindUnknown: "Bilinmiyor",
 ]

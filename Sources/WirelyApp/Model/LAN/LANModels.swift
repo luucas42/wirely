@@ -59,7 +59,7 @@ struct MACAddress: Hashable, Codable, CustomStringConvertible {
 
 /// What a device looks like to the user; picks the map icon.
 enum DeviceKind: String, Codable, CaseIterable {
-    case router, computer, phone, tablet, tv, speaker, printer, smartHome, console, nas, unknown
+    case router, computer, phone, tablet, watch, tv, speaker, printer, smartHome, console, nas, unknown
 
     /// SF Symbol for the map and the list.
     var symbol: String {
@@ -68,6 +68,7 @@ enum DeviceKind: String, Codable, CaseIterable {
         case .computer: return "laptopcomputer"
         case .phone: return "iphone"
         case .tablet: return "ipad"
+        case .watch: return "applewatch"
         case .tv: return "tv"
         case .speaker: return "hifispeaker"
         case .printer: return "printer"

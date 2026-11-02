@@ -260,7 +260,11 @@ struct LANHelperTests {
         #expect(ReverseDNS.clean("host.localdomain", ip: "192.168.1.5") == "host")
         #expect(ReverseDNS.clean("192.168.1.9", ip: "192.168.1.9") == nil)
         #expect(ReverseDNS.clean(".local", ip: "192.168.1.9") == nil)
-        #expect(ReverseDNS.clean("printer.example.com", ip: "192.168.1.9") == "printer.example.com")
+        #expect(ReverseDNS.clean("printer.example.com", ip: "192.168.1.9") == "printer")
+        #expect(ReverseDNS.clean("Kitchen-Plug.hgw", ip: "192.168.1.9") == "Kitchen-Plug")
+        #expect(ReverseDNS.clean("Kitchen-Plug.hgw.", ip: "192.168.1.9") == "Kitchen-Plug")
+        #expect(ReverseDNS.clean("plain", ip: "192.168.1.9") == "plain")
+        #expect(ReverseDNS.clean("", ip: "192.168.1.9") == nil)
     }
 
     @Test func raopNamesLoseTheirMACPrefix() {
