@@ -166,4 +166,63 @@ struct RouteStationsTests {
             #expect(!RouteStations.isNonPublic(ip), "\(ip)")
         }
     }
+
+    // MARK: Plausibility
+
+    private static let indiana = loc("Francisco", "US", 38.3, -87.4)
+    private static let oregon = loc("Boardman", "US", 45.8, -119.7)
+
+    @Test func infeasibleTargetIsShownNearPreviousStop() {
+        let r = result([hop(1, "192.0.2.1", 46), hop(2, "198.51.100.9", 47, dest: true)])
+        let locs = ["192.0.2.1": frankfurt, "198.51.100.9": Self.indiana]
+        let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "cdn.example.com")
+        #expect(s.map(\.city) == ["Istanbul", "Frankfurt", "Frankfurt"])
+        #expect(s[2].kind == .target)
+        #expect(s[2].point == frankfurt.point)
+        #expect(s[2].locationNearPrevious)
+        #expect(!s[1].locationNearPrevious)
+        #expect(s[2].rttMs == 47)
+    }
+
+    @Test func infeasibleMiddleHopFolds() {
+        let r = result([hop(1, "192.0.2.1", 20), hop(2, "198.51.100.1", 22), hop(3, "198.51.100.9", 60, dest: true)])
+        let locs = ["192.0.2.1": sofia, "198.51.100.1": Self.indiana, "198.51.100.9": vienna]
+        let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "example.com")
+        #expect(s.map(\.city) == ["Istanbul", "Sofia", "Vienna"])
+        #expect(s[1].hopCount == 2)
+        #expect(s.allSatisfy { !$0.locationNearPrevious })
+    }
+
+    @Test func feasibleFarTargetIsKept() {
+        let r = result([hop(1, "192.0.2.1", 46), hop(2, "198.51.100.9", 188, dest: true)])
+        let locs = ["192.0.2.1": frankfurt, "198.51.100.9": Self.oregon]
+        let s = RouteStations.build(home: home, legs: [(.direct, r)], locations: locs, vpn: nil, targetName: "example.com")
+        #expect(s.map(\.city) == ["Istanbul", "Frankfurt", "Boardman"])
+        #expect(s[2].point == Self.oregon.point)
+        #expect(!s[2].locationNearPrevious)
+    }
+
+    @Test func vpnRttFromOpenLegWhenTunnelNotReached() {
+        let tunnel = result([hop(1, "192.168.1.1", 1), hop(2, nil, nil)], target: "192.0.2.50", address: "192.0.2.50",
+                            reached: false)
+        let open = result([hop(1, "192.0.2.1", 46), hop(2, "192.0.2.2", 46), hop(3, "198.51.100.9", 55, dest: true)])
+        let locs = ["192.0.2.1": frankfurt, "192.0.2.2": frankfurt, "198.51.100.9": amsterdam]
+        let s = RouteStations.build(home: home, legs: [(.tunnel, tunnel), (.open, open)], locations: locs,
+                                    vpn: frankfurt, tunnelLatencyMs: 109, targetName: "example.com")
+        let vpnStation = s.first { $0.kind == .vpn }
+        #expect(vpnStation?.rttMs == 46)
+        #expect(s.allSatisfy { $0.jumpMs == nil || $0.jumpMs! < 100 })
+    }
+
+    @Test func openLegHopInVpnCityFoldsIntoVpnStation() {
+        let tunnel = result([hop(1, "192.168.1.1", 1), hop(2, "192.0.2.50", 60, dest: true)],
+                            target: "192.0.2.50", address: "192.0.2.50")
+        let open = result([hop(1, "192.0.2.1", 46), hop(2, "198.51.100.9", 47, dest: true)])
+        let locs = ["192.0.2.1": frankfurt, "198.51.100.9": Self.indiana]
+        let s = RouteStations.build(home: home, legs: [(.tunnel, tunnel), (.open, open)], locations: locs,
+                                    vpn: frankfurt, targetName: "cdn.example.com")
+        #expect(s.map(\.kind) == [.home, .vpn, .target])
+        #expect(s[1].rttMs == 46)
+        #expect(s[2].locationNearPrevious)
+    }
 }

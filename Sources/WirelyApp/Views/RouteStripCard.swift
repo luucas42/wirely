@@ -134,11 +134,13 @@ struct RouteStripCard: View {
         }
     }
 
+    private func name(_ st: TraceStation) -> String { (st.locationNearPrevious ? "≈ " : "") + st.city }
+
     private func station(_ st: TraceStation, spacing: CGFloat) -> some View {
         let selected = trace.selected == st.id
         let ms = st.rttMs.map { "\(Int($0.rounded())) ms" } ?? "—"
         let face = VStack(spacing: Self.gap) {
-            Text(st.city)
+            Text(name(st))
                 .font(.mr(12.5, 800))
                 .foregroundStyle(selected ? Theme.ink : Theme.secondary)
                 .lineLimit(1).truncationMode(.tail)
@@ -157,11 +159,11 @@ struct RouteStripCard: View {
             if previewMode {
                 face
             } else {
-                Button { trace.selected = st.id } label: { face }.buttonStyle(.plain).help(st.city)
+                Button { trace.selected = st.id } label: { face }.buttonStyle(.plain).help(name(st))
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(st.city), \(ms)")
+        .accessibilityLabel("\(name(st)), \(ms)")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 

@@ -237,6 +237,8 @@ enum PreviewRenderer {
             Scenario(label: "route-connected-wide", status: connected, samples: true, latency: 46,
                      route: RouteScenario(phase: .done, stations: sample, selected: 2, target: "example.com"),
                      size: CGSize(width: 1200, height: 760)),
+            Scenario(label: "route-cdn", status: connected, samples: true, latency: 46,
+                     route: RouteScenario(phase: .done, stations: cdnStations(), selected: 2, target: "cdn.example.com")),
             Scenario(label: "route-long-names-min", status: connected, samples: true, latency: 46,
                      route: longNames, size: CGSize(width: 820, height: 560)),
             Scenario(label: "route-long-names-wide", status: connected, samples: true, latency: 46,
@@ -271,6 +273,22 @@ enum PreviewRenderer {
         write(AnyView(RouteMapView(home: istanbul, exit: frankfurt(now), exitIP: exitIP, phase: .connected)
             .environmentObject(l10n).padding(40).frame(width: 920, height: 600).background(Theme.ground)),
               label: "europe", scheme: .dark, into: directory)
+    }
+
+    /// An anycast target: the CDN address geolocates far away, so it is drawn near the previous stop.
+    private static func cdnStations() -> [TraceStation] {
+        func st(_ id: Int, _ city: String, _ cc: String, _ lat: Double, _ lon: Double, _ kind: TraceStationKind,
+                _ addr: String?, _ ms: Double, _ leg: TraceLegKind, near: Bool = false) -> TraceStation {
+            var s = TraceStation(id: id, city: city, countryCode: cc, point: GeoPoint(lat: lat, lon: lon), kind: kind,
+                                 hopCount: 2, address: addr, rttMs: ms, jumpMs: nil, leg: leg)
+            s.locationNearPrevious = near
+            return s
+        }
+        return [
+            st(0, "Istanbul", "TR", 41.01, 28.98, .home, nil, 10, .tunnel),
+            st(1, "Frankfurt am Main", "DE", 50.11, 8.68, .vpn, "203.0.113.10", 46, .tunnel),
+            st(2, "Frankfurt am Main", "DE", 50.11, 8.68, .target, "192.0.2.140", 47, .open, near: true),
+        ]
     }
 
     /// A route that leaves Istanbul and comes back, with a long city name and a silent target.

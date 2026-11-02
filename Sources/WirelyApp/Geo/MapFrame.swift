@@ -9,9 +9,13 @@ public struct MapFrame {
     private let latSpan: Double
     private let xScale: Double      // cos(mid-latitude)
     private let size: CGSize
+    /// The points are fitted below this band; land dots still cover the whole view.
+    private let topInset: CGFloat
 
-    public init(points: [GeoPoint], size: CGSize, paddingFraction: Double = 0.6, minSpanLon: Double = 40) {
+    public init(points: [GeoPoint], size: CGSize, paddingFraction: Double = 0.6, minSpanLon: Double = 40,
+                topInset: CGFloat = 0) {
         self.size = size
+        self.topInset = topInset
         var lons = points.map(\.lon)
         if let lo = lons.min(), let hi = lons.max(), hi - lo > 180 {
             lons = lons.map { $0 < 0 ? $0 + 360 : $0 }
@@ -25,7 +29,7 @@ public struct MapFrame {
         var spanLon = max(minSpanLon, (hiLon - loLon) * (1 + 2 * paddingFraction))
         var spanLat = max(0.0001, (hiLat - loLat) * (1 + 2 * paddingFraction))
         // Grow the shorter axis so the frame's aspect equals the view's.
-        let aspect = Double(size.width / max(size.height, 1))
+        let aspect = Double(size.width / max(size.height - topInset, 1))
         if spanLon * xs / spanLat > aspect {
             spanLat = spanLon * xs / aspect
         } else {
@@ -49,13 +53,13 @@ public struct MapFrame {
 
     public func project(_ p: GeoPoint) -> CGPoint {
         let x = (frameLon(p.lon) - minLon) / lonSpan * Double(size.width)
-        let y = (1 - (p.lat - minLat) / latSpan) * Double(size.height)
+        let y = Double(topInset) + (1 - (p.lat - minLat) / latSpan) * Double(size.height - topInset)
         return CGPoint(x: x, y: y)
     }
 
     private func unproject(_ pt: CGPoint) -> GeoPoint {
         let lon = minLon + Double(pt.x / size.width) * lonSpan
-        let lat = minLat + (1 - Double(pt.y / size.height)) * latSpan
+        let lat = minLat + (1 - Double((pt.y - topInset) / (size.height - topInset))) * latSpan
         return GeoPoint(lat: lat, lon: lon)
     }
 
@@ -67,7 +71,8 @@ public struct MapFrame {
         while y < size.height {
             var x = spacing / 2
             while x < size.width {
-                let g = unproject(CGPoint(x: x, y: y))
+                var g = unproject(CGPoint(x: x, y: y))
+                g.lat = min(90, max(-90, g.lat))
                 if LandMask.isLand(lat: g.lat, lon: g.lon) { out.append(CGPoint(x: x, y: y)) }
                 x += spacing
             }

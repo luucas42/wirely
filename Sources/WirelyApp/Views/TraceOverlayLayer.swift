@@ -20,6 +20,8 @@ struct TraceOverlayLayer: View {
 
     @EnvironmentObject private var l10n: L10n
 
+    /// Height of the band at the top of the map taken by the target pill and the legend; stations are fitted below it.
+    static let topBand: CGFloat = 64
     private static let bend: CGFloat = 0.10
     private static let chipMaxWidth: CGFloat = 240
     private static let chipPad = CGSize(width: 14, height: 11)
@@ -42,7 +44,7 @@ struct TraceOverlayLayer: View {
         ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in draw(ctx, pts) }
             ForEach(Array(trace.stations.enumerated()), id: \.offset) { i, st in
-                if hidden.contains(i) == false { label(st, anchor: pts[i], rect: labels[i]) }
+                if hidden.contains(i) == false { label(st, anchor: pts[i], rect: labels[i], showSub: !hasChip(i)) }
             }
             if let sel = trace.selected, trace.stations.indices.contains(sel) {
                 let content = chipContent(trace.stations[sel])
@@ -54,6 +56,9 @@ struct TraceOverlayLayer: View {
         }
         .allowsHitTesting(false)
     }
+
+    /// The detail chip is shown for this station and already carries its sub-line.
+    private func hasChip(_ i: Int) -> Bool { trace.selected == i && trace.stations.indices.contains(i) }
 
     private var bounds: CGRect { CGRect(origin: .zero, size: size).insetBy(dx: 6, dy: 6) }
 
@@ -130,7 +135,13 @@ struct TraceOverlayLayer: View {
 
     // MARK: Labels
 
+    /// An anycast/CDN target is drawn at the previous stop: it carries the target's name, not that city's.
+    private func title(_ s: TraceStation) -> String {
+        s.locationNearPrevious && !trace.targetName.isEmpty ? trace.targetName : s.city
+    }
+
     private func subtitle(_ s: TraceStation) -> String? {
+        if s.locationNearPrevious { return l10n.format(.traceNearCity, s.city) }
         switch s.kind {
         case .home: return l10n(.you)
         case .vpn: return l10n(.traceVPNServer)
@@ -143,7 +154,7 @@ struct TraceOverlayLayer: View {
     /// (the route leaves a city and comes back). The home label always stays.
     private func hiddenLabels(_ pts: [CGPoint]) -> Set<Int> {
         var hidden = Set<Int>()
-        for i in pts.indices where trace.stations[i].kind != .home {
+        for i in pts.indices where trace.stations[i].kind != .home && !trace.stations[i].locationNearPrevious {
             let twin = (0..<i).contains { j in
                 !hidden.contains(j) && trace.stations[j].city == trace.stations[i].city
                     && hypot(pts[j].x - pts[i].x, pts[j].y - pts[i].y) < 48
@@ -155,18 +166,18 @@ struct TraceOverlayLayer: View {
 
     private func placeLabels(_ pts: [CGPoint], hidden: Set<Int>) -> [CGRect] {
         let sizes = trace.stations.enumerated().map { i, s in
-            hidden.contains(i) ? CGSize.zero : LabelPlacer.estimate(title: s.city, subtitle: subtitle(s))
+            hidden.contains(i) ? CGSize.zero : LabelPlacer.estimate(title: title(s), subtitle: hasChip(i) ? nil : subtitle(s))
         }
         return LabelPlacer.place(anchors: pts, sizes: sizes, bounds: bounds,
                                  avoid: trace.avoid + (showsLegend ? [legendRect] : []) + legBoxes(pts))
     }
 
-    private func label(_ s: TraceStation, anchor: CGPoint, rect: CGRect) -> some View {
+    private func label(_ s: TraceStation, anchor: CGPoint, rect: CGRect, showSub: Bool) -> some View {
         let align: HorizontalAlignment = abs(rect.midX - anchor.x) < 1 ? .center : rect.midX > anchor.x ? .leading : .trailing
         let frameAlign: Alignment = align == .center ? .center : align == .leading ? .leading : .trailing
         return VStack(alignment: align, spacing: 1) {
-            Text(s.city).font(.mr(14, 800)).foregroundStyle(s.kind == .vpn ? Theme.cobalt : Theme.ink)
-            if let sub = subtitle(s) { Text(sub).font(.mr(12, 600)).foregroundStyle(Theme.secondary) }
+            Text(title(s)).font(.mr(14, 800)).foregroundStyle(s.kind == .vpn ? Theme.cobalt : Theme.ink)
+            if showSub, let sub = subtitle(s) { Text(sub).font(.mr(12, 600)).foregroundStyle(Theme.secondary) }
         }
         .lineLimit(1)
         .fixedSize()
@@ -216,6 +227,7 @@ struct TraceOverlayLayer: View {
             if let j = s.jumpMs { texts.append((l10n.format(.traceJump, Int(ms.rounded()), Int(j.rounded())), .jump)) }
             else { texts.append(("\(Int(ms.rounded())) ms", .ms)) }
         }
+        if s.locationNearPrevious { texts.append((l10n(.traceCDNNote), .note)) }
         if s.kind == .lastAnswer { texts.append((l10n(.traceTargetSilent), .note)) }
         let lines = texts.enumerated().map { ChipLine(id: $0.offset, text: $0.element.0, style: $0.element.1) }
 

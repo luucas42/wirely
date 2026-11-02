@@ -78,8 +78,9 @@ struct RouteMapView: View, Equatable {
     // MARK: Route mode
 
     private func routeBody(_ t: TraceOverlay, size: CGSize) -> some View {
-        let frame = MapFrame(points: t.stations.map(\.point), size: size, paddingFraction: 0.28, minSpanLon: 10)
-        let key = "trace|\(Int(size.width))x\(Int(size.height))|" + t.stations.map { "\($0.point.lat),\($0.point.lon)" }.joined(separator: ";")
+        let frame = MapFrame(points: t.stations.map(\.point), size: size, paddingFraction: 0.28, minSpanLon: 10,
+                             topInset: TraceOverlayLayer.topBand)
+        let key = "trace|\(Int(size.width))x\(Int(size.height))|\(Int(TraceOverlayLayer.topBand))|" + t.stations.map { "\($0.point.lat),\($0.point.lon)" }.joined(separator: ";")
         let dots = cache.path(frame: frame, dy: 0, key: key)
         return ZStack(alignment: .topLeading) {
             Canvas { ctx, _ in ctx.fill(dots, with: .color(Theme.dot)) }

@@ -130,7 +130,12 @@ enum RouteStations {
                 }
                 // The server always gets its own station, even when it sits in the home city.
                 if stations[last].city == loc.city, !(isServer && stations[last].kind == .home) {
+                    let before = stations[last].rttMs
                     fold(hop, into: last)
+                    // Open-leg hops right behind the VPN server share its station; its round trip is the smaller one.
+                    if kind != .tunnel, stations[last].kind == .vpn, let b = before, let r = hop.rttMs {
+                        stations[last].rttMs = min(b, r)
+                    }
                     if isServer {
                         placedServer = true
                         stations[last].kind = .vpn
