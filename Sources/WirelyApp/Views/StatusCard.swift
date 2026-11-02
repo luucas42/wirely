@@ -9,6 +9,7 @@ struct StatusCard: View {
     let onEdit: () -> Void
 
     @EnvironmentObject private var l10n: L10n
+    @EnvironmentObject private var trace: TraceModel
     @Environment(\.previewMode) private var previewMode
     @State private var showDetails = false
 
@@ -140,9 +141,16 @@ struct StatusCard: View {
     @ViewBuilder
     private func trailing(phase: RoutePhase, status: TunnelStatus, now: Date) -> some View {
         HStack(spacing: 10) {
+            routeButton(phase: phase)
             if let config = tunnel.config { infoButton(config, status: status, now: now) }
             primaryButton(phase: phase)
         }
+    }
+
+    /// Opens route mode; needs a connected or idle tunnel and a running helper (the trace goes through it).
+    private func routeButton(phase: RoutePhase) -> some View {
+        IconButton(symbol: "point.topleft.down.curvedto.point.bottomright.up", label: l10n(.traceRoute)) { trace.open() }
+            .disabled(!(phase == .connected || phase == .idle) || controller.helperState != .ready)
     }
 
     private func infoButton(_ config: TunnelConfig, status: TunnelStatus, now: Date) -> some View {

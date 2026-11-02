@@ -11,6 +11,7 @@ struct MainView: View {
     @EnvironmentObject private var l10n: L10n
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var updates: UpdateChecker
+    @EnvironmentObject private var trace: TraceModel
     @Environment(\.previewMode) private var previewMode
     @State private var importing = false
     @State private var editing: StoredTunnel?
@@ -20,6 +21,7 @@ struct MainView: View {
     @State private var showImportErrors = false
     @State private var exportError: String?
     @State private var notesRelease: ReleaseInfo?
+    @State private var escMonitor: Any?
 
     private var selected: StoredTunnel? { route.selected }
 
@@ -94,6 +96,31 @@ struct MainView: View {
         .onAppear { ensureSelection(preferConnected: true) }
         .onChange(of: store.tunnels) { _ in ensureSelection(preferConnected: false) }
         .onChange(of: controller.status.state) { _ in ensureSelection(preferConnected: true) }
+        .onChange(of: route.selectedName) { _ in if trace.active { trace.close() } }
+        .onChange(of: router.showingSettings) { showing in if showing, trace.active { trace.close() } }
+        .onChange(of: trace.active) { active in
+            if active { installEscMonitor() } else { removeEscMonitor() }
+        }
+        .onDisappear(perform: removeEscMonitor)
+    }
+
+    // MARK: Esc
+
+    /// Esc leaves route mode. Same key-monitor approach as the Settings page; only one of the two is ever active
+    /// because opening Settings closes route mode. A sheet or dialog gets the key first.
+    private func installEscMonitor() {
+        guard !previewMode, escMonitor == nil else { return }
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [trace] event in
+            guard event.keyCode == 53, trace.active,
+                  event.window?.attachedSheet == nil, event.window?.sheetParent == nil else { return event }
+            trace.close()
+            return nil
+        }
+    }
+
+    private func removeEscMonitor() {
+        if let escMonitor { NSEvent.removeMonitor(escMonitor) }
+        escMonitor = nil
     }
 
     private static let importTypes: [UTType] =
@@ -119,13 +146,18 @@ struct MainView: View {
                 .padding(.horizontal, 40)
                 .frame(maxHeight: .infinity)
 
-            if let t = selected {
+            if trace.active {
+                RouteStripCard(trace: trace, fallbackTitle: route.exit?.city ?? selected?.name ?? "")
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 24)
+                    .padding(.top, 4)
+            } else if let t = selected {
                 StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t })
                     .padding(.horizontal, 24)
                     .padding(.bottom, 24)
                     .padding(.top, 4)
             }
-    }
+        }
     }
 
     // MARK: Map area
@@ -135,14 +167,23 @@ struct MainView: View {
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 RouteMapView(home: route.home, exit: selected == nil ? nil : route.exit, exitIP: route.exitIP,
                              phase: RouteModel.phase(of: selected, status: controller.status, now: ctx.date),
-                             lifted: store.tunnels.isEmpty)
+                             lifted: store.tunnels.isEmpty, trace: traceOverlay)
                     .equatable()
             }
+            if trace.active { TraceTargetPill(trace: trace).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading) }
             if store.tunnels.isEmpty { emptyCard }
             VStack(spacing: 8) { banners }
                 .padding(.top, 4)
                 .frame(maxWidth: .infinity, alignment: .top)
         }
+    }
+
+    /// What route mode draws over the map; nil in normal mode.
+    private var traceOverlay: TraceOverlay? {
+        guard trace.active else { return nil }
+        let typed = trace.target.trimmingCharacters(in: .whitespaces)
+        return TraceOverlay(stations: trace.stations, selected: trace.selected, running: trace.phase == .running,
+                            targetName: typed, avoid: [TraceTargetPill.rect])
     }
 
     @ViewBuilder

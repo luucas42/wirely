@@ -116,6 +116,19 @@ final class TraceModel: ObservableObject {
         phase = .done
     }
 
+    /// Preview renders only: sets the published state without running anything.
+    func setPreview(phase: Phase, stations: [TraceStation], selected: Int?, target: String, hopCount: Int = 0,
+                    totalMs: Int? = nil, reached: Bool = true) {
+        active = true
+        self.phase = phase
+        self.stations = stations
+        self.selected = selected
+        self.target = target
+        self.hopCount = hopCount
+        self.totalMs = totalMs
+        self.reached = reached
+    }
+
     // MARK: Helpers
 
     /// Unique public hop addresses, in path order.

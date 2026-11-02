@@ -128,7 +128,8 @@ struct TraceModelTests {
         }
         m.target = "example.com"
         let first = Task { await m.run() }
-        while m.phase != .running { await Task.yield() }
+        // Wait until the first trace is really in flight (phase flips before the closure records it).
+        while m.phase != .running || rec.traces.isEmpty { await Task.yield() }
         await m.run()   // ignored: returns at once
         #expect(rec.traces == ["example.com"])
         gate.continuation.yield()

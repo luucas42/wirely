@@ -8,6 +8,8 @@ struct TraceOverlay: Equatable {
     var running: Bool
     /// What the user typed (or the resolved host); the target station's sub-line.
     var targetName: String = ""
+    /// Overlay cards floating over the map (the target pill), in map coordinates; labels keep off them.
+    var avoid: [CGRect] = []
 }
 
 /// Legs, markers, labels, legend and detail chip of a route trace. Static: no per-frame work.
@@ -43,7 +45,7 @@ struct TraceOverlayLayer: View {
             if let sel = trace.selected, trace.stations.indices.contains(sel) {
                 chip(trace.stations[sel], rect: LabelPlacer.placeChip(
                     anchor: pts[sel], size: Self.chipSize, allAnchors: pts, bounds: bounds,
-                    obstacles: labels + (showsLegend ? [legendRect] : []) + legBoxes(pts)))
+                    obstacles: labels + trace.avoid + (showsLegend ? [legendRect] : []) + legBoxes(pts)))
             }
             if showsLegend { legend.offset(x: legendRect.minX, y: legendRect.minY) }
         }
@@ -137,7 +139,7 @@ struct TraceOverlayLayer: View {
     private func placeLabels(_ pts: [CGPoint]) -> [CGRect] {
         let sizes = trace.stations.map { LabelPlacer.estimate(title: $0.city, subtitle: subtitle($0)) }
         return LabelPlacer.place(anchors: pts, sizes: sizes, bounds: bounds,
-                                 avoid: (showsLegend ? [legendRect] : []) + legBoxes(pts))
+                                 avoid: trace.avoid + (showsLegend ? [legendRect] : []) + legBoxes(pts))
     }
 
     private func label(_ s: TraceStation, anchor: CGPoint, rect: CGRect) -> some View {

@@ -51,6 +51,15 @@ enum PreviewRenderer {
         var update: ReleaseInfo?
         var checked = false
         var sheet = false
+        var route: RouteScenario?
+    }
+
+    /// Route-mode state for the full window.
+    private struct RouteScenario {
+        var phase: TraceModel.Phase
+        var stations: [TraceStation]
+        var selected: Int?
+        var target: String
     }
 
     /// Never reached: previews must not touch the network.
@@ -117,6 +126,19 @@ enum PreviewRenderer {
         return c
     }
 
+    /// A `TraceModel` with fake closures (no helper, no network); route scenarios set its state directly.
+    private static func traceModel(_ s: Scenario) -> TraceModel {
+        let t = TraceModel(trace: { _ in .failure(TraceFailure(code: nil, message: "preview")) },
+                           locate: { _ in nil },
+                           context: { (home: istanbul, vpn: nil, endpointHost: nil, connected: false, latencyMs: nil) })
+        if let r = s.route {
+            let hops = max(0, r.stations.reduce(0) { $0 + $1.hopCount })
+            t.setPreview(phase: r.phase, stations: r.stations, selected: r.selected, target: r.target,
+                         hopCount: hops, totalMs: r.stations.last?.rttMs.map { Int($0.rounded()) })
+        }
+        return t
+    }
+
     private static func view(_ s: Scenario, now: Date) -> AnyView {
         let store = store(for: s)
         let controller = controller(s)
@@ -127,6 +149,7 @@ enum PreviewRenderer {
         let router = AppRouter()
         if let section = s.settings { router.openSettings(section) }
         let updates = updateChecker(s)
+        let trace = traceModel(s)
         if s.sheet, let r = s.update {
             return AnyView(ReleaseNotesSheet(release: r).environmentObject(l10n))
         }
@@ -134,12 +157,14 @@ enum PreviewRenderer {
             return AnyView(MenuBarView(store: store, controller: controller, route: route)
                 .environmentObject(l10n)
                 .environmentObject(router)
-                .environmentObject(updates))
+                .environmentObject(updates)
+                .environmentObject(trace))
         }
         return AnyView(MainView(store: store, controller: controller, route: route)
             .environmentObject(l10n)
             .environmentObject(router)
             .environmentObject(updates)
+            .environmentObject(trace)
             .frame(width: 920, height: 600))
     }
 
@@ -163,6 +188,16 @@ enum PreviewRenderer {
         let blocked = TunnelStatus(state: .failed, tunnelName: name, message: "wireguard-go exited", killSwitch: true)
 
         let release = sampleRelease(now)
+        let sample = sampleStations()
+        // No VPN: the same path as one open leg, without the Sofia stop.
+        let directStations = sample.filter { $0.city != "Sofia" }.enumerated().map { i, st -> TraceStation in
+            var d = st
+            d.id = i
+            d.leg = .open
+            if d.kind == .vpn { d.kind = .hop }
+            return d
+        }
+
         let scenarios: [Scenario] = [
             Scenario(label: "connected", status: connected, samples: true, latency: 46),
             Scenario(label: "connecting", status: connecting),
@@ -184,6 +219,13 @@ enum PreviewRenderer {
             Scenario(label: "settings-about", settings: .about, update: release),
             Scenario(label: "settings-about-uptodate", settings: .about, checked: true),
             Scenario(label: "update-banner", status: connected, samples: true, latency: 46, update: release),
+            Scenario(label: "route-connected", status: connected, samples: true, latency: 46,
+                     route: RouteScenario(phase: .done, stations: sample, selected: 2, target: "example.com")),
+            Scenario(label: "route-direct", exit: false,
+                     route: RouteScenario(phase: .done, stations: directStations, selected: directStations.firstIndex { $0.jumpMs != nil },
+                                          target: "example.com")),
+            Scenario(label: "route-running", status: connected, samples: true, latency: 46,
+                     route: RouteScenario(phase: .running, stations: [], selected: nil, target: "example.com")),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
 
