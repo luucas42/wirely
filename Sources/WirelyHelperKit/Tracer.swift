@@ -104,7 +104,7 @@ public final class Tracer {
         var collector = TraceCollector()
         var schedule = ProbeSchedule(maxTTL: collector.maxTTL, deadline: deadline)
         let start = ProcessInfo.processInfo.systemUptime
-        var lastAnswerAt: TimeInterval?
+        var lastNewAnswerAt: TimeInterval?
         var buffer = [UInt8](repeating: 0, count: 1500)
 
         func clock() -> TimeInterval { ProcessInfo.processInfo.systemUptime - start }
@@ -147,15 +147,16 @@ public final class Tracer {
                 guard n > 0 else { continue }
                 if let answer = ICMPCodec.parse(Array(buffer[0..<n]), id: id) {
                     let arrived = ProcessInfo.processInfo.systemUptime
-                    collector.received(answer, at: arrived, target: address)
-                    lastAnswerAt = arrived - start
+                    if collector.received(answer, at: arrived, target: address) {
+                        lastNewAnswerAt = arrived - start
+                    }
                     if stopOnPacket { return }
                 }
             }
         }
 
         run: while true {
-            switch schedule.next(now: clock(), collector: collector, lastAnswerAt: lastAnswerAt) {
+            switch schedule.next(now: clock(), collector: collector, lastNewAnswerAt: lastNewAnswerAt) {
             case .send(let round, let ttls):
                 // Ascending, 2 ms apart so a burst does not trip rate limiting; keep reading in the gaps.
                 for (index, ttl) in ttls.sorted().enumerated() {

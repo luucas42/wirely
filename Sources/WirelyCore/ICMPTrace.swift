@@ -94,9 +94,14 @@ public struct TraceCollector {
         sentAt[Self.seq(ttl: ttl, round: round)] = at
     }
 
-    public mutating func received(_ a: ICMPAnswer, at: TimeInterval, target: String) {
+    /// Returns true when the answer is news: the first one for its TTL (at or before the destination), or one
+    /// that sets or lowers the destination TTL.
+    @discardableResult
+    public mutating func received(_ a: ICMPAnswer, at: TimeInterval, target: String) -> Bool {
         let ttl = Int(a.seq) % 64
-        guard (1...maxTTL).contains(ttl), let start = sentAt[a.seq] else { return }
+        guard (1...maxTTL).contains(ttl), let start = sentAt[a.seq] else { return false }
+        let first = answers[ttl] == nil
+        let destinationBefore = destinationTTL
         answeredSeqs.insert(a.seq)
         let rtt = max(0, (at - start) * 1000)
         let isDestination = (a.kind == .echoReply || a.kind == .unreachable) && a.from == target
@@ -106,6 +111,9 @@ public struct TraceCollector {
         } else {
             answers[ttl] = (a.from, rtt, isDestination)
         }
+        let destinationAfter = destinationTTL
+        if let destinationAfter, destinationAfter != destinationBefore { return true }
+        return first && ttl <= (destinationAfter ?? maxTTL)
     }
 
     /// Smallest TTL whose answer came from the target, across all rounds.
@@ -115,6 +123,9 @@ public struct TraceCollector {
 
     /// Largest TTL that has an answer.
     public var lastAnsweredTTL: Int? { answers.keys.max() }
+
+    /// TTLs that have an answer from any round.
+    public var answeredTTLs: Set<Int> { Set(answers.keys) }
 
     /// TTLs that got an answer to their probe in `round`.
     public func answered(inRound round: Int) -> Set<Int> {
