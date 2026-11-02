@@ -88,7 +88,7 @@ public final class Tracer {
     }
 
     /// Traces the route to `target`. `deadline` is the overall time budget in seconds.
-    public func trace(_ target: String, deadline: TimeInterval = 1.5) throws -> TraceResult {
+    public func trace(_ target: String, deadline: TimeInterval = 3.0) throws -> TraceResult {
         guard lock.try() else { throw TraceError.busy }
         defer { lock.unlock() }
 
@@ -102,9 +102,12 @@ public final class Tracer {
         let id = UInt16.random(in: 0...UInt16.max)
         let payload = [UInt8](repeating: 0x57, count: 24)
         var collector = TraceCollector()
+        var schedule = ProbeSchedule(maxTTL: collector.maxTTL, deadline: deadline)
         let start = ProcessInfo.processInfo.systemUptime
-        let end = start + deadline
-        let retryAt = start + 0.15
+        var lastAnswerAt: TimeInterval?
+        var buffer = [UInt8](repeating: 0, count: 1500)
+
+        func clock() -> TimeInterval { ProcessInfo.processInfo.systemUptime - start }
 
         func probe(ttl: Int, round: Int) throws {
             var value = Int32(ttl)
@@ -126,34 +129,43 @@ public final class Tracer {
             if sent >= 0 { collector.sent(ttl: ttl, round: round, at: ProcessInfo.processInfo.systemUptime) }
         }
 
-        for ttl in 1...collector.maxTTL { try probe(ttl: ttl, round: 0) }
-
-        var secondRoundSent = false
-        var buffer = [UInt8](repeating: 0, count: 1500)
-        while true {
-            let now = ProcessInfo.processInfo.systemUptime
-            if now >= end { break }
-            if !secondRoundSent && now >= retryAt {
-                secondRoundSent = true
-                for ttl in collector.unansweredTTLs() { try probe(ttl: ttl, round: 1) }
-                continue
+        /// Reads and feeds every packet that arrives until the trace clock reaches `until`, or after the first
+        /// packet when `stopOnPacket` (so the schedule can react to it). Never stops reading while it waits.
+        func drain(until: TimeInterval, stopOnPacket: Bool) throws {
+            while true {
+                let now = clock()
+                if now >= until { return }
+                let waitMs = max(1, Int32(((until - now) * 1000).rounded(.up)))
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let ready = poll(&pfd, 1, waitMs)
+                if ready < 0 {
+                    if errno == EINTR { continue }
+                    throw TraceError.socket(String(cString: strerror(errno)))
+                }
+                guard ready > 0 else { continue }
+                let n = recvfrom(fd, &buffer, buffer.count, 0, nil, nil)
+                guard n > 0 else { continue }
+                if let answer = ICMPCodec.parse(Array(buffer[0..<n]), id: id) {
+                    let arrived = ProcessInfo.processInfo.systemUptime
+                    collector.received(answer, at: arrived, target: address)
+                    lastAnswerAt = arrived - start
+                    if stopOnPacket { return }
+                }
             }
-            if collector.isComplete() && (secondRoundSent || collector.unansweredTTLs().isEmpty) { break }
+        }
 
-            // Wait for data, but wake in time to send round 1.
-            let wakeAt = secondRoundSent ? end : min(end, retryAt)
-            let waitMs = max(1, Int32(((wakeAt - now) * 1000).rounded(.up)))
-            var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-            let ready = poll(&pfd, 1, waitMs)
-            if ready < 0 {
-                if errno == EINTR { continue }
-                throw TraceError.socket(String(cString: strerror(errno)))
-            }
-            guard ready > 0 else { continue }
-            let n = recvfrom(fd, &buffer, buffer.count, 0, nil, nil)
-            guard n > 0 else { continue }
-            if let answer = ICMPCodec.parse(Array(buffer[0..<n]), id: id) {
-                collector.received(answer, at: ProcessInfo.processInfo.systemUptime, target: address)
+        run: while true {
+            switch schedule.next(now: clock(), collector: collector, lastAnswerAt: lastAnswerAt) {
+            case .send(let round, let ttls):
+                // Ascending, 2 ms apart so a burst does not trip rate limiting; keep reading in the gaps.
+                for (index, ttl) in ttls.sorted().enumerated() {
+                    if index > 0 { try drain(until: clock() + 0.002, stopOnPacket: false) }
+                    try probe(ttl: ttl, round: round)
+                }
+            case .wait(let until):
+                try drain(until: until, stopOnPacket: true)
+            case .finish:
+                break run
             }
         }
 
