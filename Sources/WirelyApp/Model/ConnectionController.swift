@@ -141,7 +141,9 @@ final class ConnectionController: ObservableObject {
         defer { busy = false }
         // Replacing a live tunnel tears the old one down: not a drop.
         if status.state == .connected, status.tunnelName != tunnel.name { detector.userRequestedDisconnect() }
-        switch await call(HelperRequest(command: .up, tunnelName: tunnel.name, config: tunnel.text)) {
+        let request = HelperRequest(command: .up, tunnelName: tunnel.name, config: tunnel.text,
+                                    killSwitch: KillSwitchSettings.enabled, allowLAN: KillSwitchSettings.allowLAN)
+        switch await call(request) {
         case .success(let r):
             if !r.ok { lastError = Self.describe(r, fallback: .connectFailed) }
             if let s = r.status { apply(s) }

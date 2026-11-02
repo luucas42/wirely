@@ -54,6 +54,14 @@ struct ConnectionEventsTests {
         #expect(d.update(f, now: t0.addingTimeInterval(1), exitCity: nil).isEmpty)
     }
 
+    @Test func killSwitchDropNotifiesBlocked() {
+        var d = ConnectionEventDetector()
+        let b = TunnelStatus(state: .failed, tunnelName: "de", message: "x", killSwitch: true)
+        _ = d.update(down, now: t0.addingTimeInterval(-1), exitCity: nil)
+        #expect(d.update(b, now: t0, exitCity: nil) == [.blocked(name: "de")])
+        #expect(d.update(b, now: t0.addingTimeInterval(1), exitCity: nil).isEmpty)
+    }
+
     @Test func firstObservedStatusIsSilent() {
         var d = ConnectionEventDetector()
         #expect(d.update(up(at: t0, hs: t0), now: t0, exitCity: "X").isEmpty)

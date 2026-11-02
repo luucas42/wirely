@@ -58,7 +58,8 @@ struct MenuBarView: View {
             case .connected: return (l10n(.connected), Theme.cobalt)
             case .connecting: return (l10n(.connecting), Theme.signal)
             case .noResponse: return (l10n(.noResponse), Theme.coral)
-            case .failed: return (l10n(.failed), Theme.coral)
+            case .failed:
+                return (controller.status.isBlockedByKillSwitch ? l10n(.internetBlocked) : l10n(.failed), Theme.coral)
             case .idle, .invalid: return (l10n(.notConnected), Theme.secondary.opacity(0.6))
             }
         }()

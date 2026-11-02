@@ -55,6 +55,31 @@ public struct EndpointRoute: Equatable, Codable {
     }
 }
 
+/// The kill switch as armed for a tunnel: what it lets through and the pf enable reference it holds.
+public struct KillSwitchRecord: Equatable, Codable {
+    /// `pfctl -E` token to hand back with `pfctl -X`; nil if pf couldn't give one.
+    public var token: String?
+    public var allowLAN: Bool
+    /// Resolved WireGuard servers whose UDP stays allowed.
+    public var endpoints: [Endpoint]
+    public init(token: String?, allowLAN: Bool, endpoints: [Endpoint]) {
+        self.token = token
+        self.allowLAN = allowLAN
+        self.endpoints = endpoints
+    }
+}
+
+/// pf access for the kill switch.
+public protocol Firewall: AnyObject {
+    /// Loads `rules` into Wirely's anchor and makes sure pf is on. Reuses `token` when one is already
+    /// held, otherwise takes a new enable reference; returns the token now held.
+    func engage(rules: String, token: String?) throws -> String?
+    /// Flushes Wirely's anchor and hands back the enable reference.
+    func disengage(token: String?)
+    /// Wirely's anchor currently has rules loaded (false after a reboot wiped pf).
+    func isEngaged() -> Bool
+}
+
 public struct PersistedState: Equatable, Codable {
     public var tunnelName: String
     public var interface: String
@@ -67,11 +92,14 @@ public struct PersistedState: Equatable, Codable {
     public var ignoredKeys: [String]
     /// Reject routes (families without a tunnel address). They live on lo0 and must be deleted explicitly.
     public var rejectRoutes: [IPNetwork]
+    /// Set while the kill switch's pf rules are loaded for this tunnel (or, after a drop, still blocking).
+    public var killSwitch: KillSwitchRecord?
 
     public init(tunnelName: String, interface: String, wireguardPID: Int32?,
                 endpointRoutes: [EndpointRoute], dnsBackups: [DNSBackup],
                 dnsServers: [IPAddress], dnsSearch: [String],
-                connectedAt: Date, ignoredKeys: [String], rejectRoutes: [IPNetwork] = []) {
+                connectedAt: Date, ignoredKeys: [String], rejectRoutes: [IPNetwork] = [],
+                killSwitch: KillSwitchRecord? = nil) {
         self.tunnelName = tunnelName
         self.interface = interface
         self.wireguardPID = wireguardPID
@@ -82,11 +110,12 @@ public struct PersistedState: Equatable, Codable {
         self.connectedAt = connectedAt
         self.ignoredKeys = ignoredKeys
         self.rejectRoutes = rejectRoutes
+        self.killSwitch = killSwitch
     }
 
     private enum CodingKeys: String, CodingKey {
         case tunnelName, interface, wireguardPID, endpointRoutes, dnsBackups, dnsServers, dnsSearch
-        case connectedAt, ignoredKeys, rejectRoutes
+        case connectedAt, ignoredKeys, rejectRoutes, killSwitch
     }
 
     public init(from decoder: Decoder) throws {
@@ -101,6 +130,7 @@ public struct PersistedState: Equatable, Codable {
         connectedAt = try c.decode(Date.self, forKey: .connectedAt)
         ignoredKeys = try c.decode([String].self, forKey: .ignoredKeys)
         rejectRoutes = try c.decodeIfPresent([IPNetwork].self, forKey: .rejectRoutes) ?? []
+        killSwitch = try c.decodeIfPresent(KillSwitchRecord.self, forKey: .killSwitch)
     }
 }
 

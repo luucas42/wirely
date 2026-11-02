@@ -7,6 +7,8 @@ enum ConnectionEvent: Equatable {
     case noResponse(name: String)
     case recovered(name: String)
     case failed(name: String, message: String)
+    /// The tunnel dropped and the kill switch is now blocking all traffic.
+    case blocked(name: String)
 }
 
 /// Turns the 1 Hz stream of polled statuses into discrete events, one per transition.
@@ -60,7 +62,8 @@ struct ConnectionEventDetector {
             }
         case .failed:
             if prevState != .failed {
-                events.append(.failed(name: tunnel, message: status.message ?? ""))
+                events.append(status.isBlockedByKillSwitch ? .blocked(name: tunnel)
+                                                           : .failed(name: tunnel, message: status.message ?? ""))
             }
             noResponseSent = false
             noResponseQuiet = false

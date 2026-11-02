@@ -102,6 +102,33 @@ final class FakeDNSConfigurator: DNSConfigurator {
     func servers(of service: String) -> [String]? { services.first { $0.service == service }?.servers }
 }
 
+/// pf stand-in: remembers every ruleset loaded and every token handed back.
+final class FakeFirewall: Firewall {
+    private(set) var loaded: [String] = []
+    private(set) var released: [String?] = []
+    private(set) var current: String?
+    private(set) var tokensTaken = 0
+    var failEngage = false
+    var onEngage: (() -> Void)?
+
+    func engage(rules: String, token: String?) throws -> String? {
+        if failEngage { throw FakeLauncher.Failure() }
+        onEngage?()
+        loaded.append(rules)
+        current = rules
+        if let token { return token }
+        tokensTaken += 1
+        return "t\(tokensTaken)"
+    }
+
+    func disengage(token: String?) {
+        current = nil
+        released.append(token)
+    }
+
+    func isEngaged() -> Bool { current != nil }
+}
+
 struct FakeResolver: EndpointResolver {
     struct Failure: Error {}
     var table: [String: String]

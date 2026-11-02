@@ -32,6 +32,7 @@ func makeManager(runner: CommandRunner, wireguardGo: String, queue: DispatchQueu
         resolver: SystemResolver(),
         store: FileStateStore(),
         dns: SystemDNSConfigurator(),
+        firewall: PFFirewall(runner: runner),
         log: log.write)
 }
 
@@ -60,7 +61,9 @@ func runDaemon(_ args: [String]) -> Never {
                                       errorCode: "request.missingConfig")
             }
             do {
-                let status = try manager.up(name: name, configText: config)
+                let status = try manager.up(name: name, configText: config,
+                                            killSwitch: request.killSwitch ?? false,
+                                            allowLAN: request.allowLAN ?? true)
                 return HelperResponse(ok: true, error: nil, status: status, helperVersion: version)
             } catch {
                 let coded = (error as? TunnelError)?.codeAndArg

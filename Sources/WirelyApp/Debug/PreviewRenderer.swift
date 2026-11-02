@@ -109,6 +109,7 @@ enum PreviewRenderer {
         noResponse.txBytes = 148
         let connecting = TunnelStatus(state: .connecting, tunnelName: name, endpoint: "\(exitIP):51820")
         let failed = TunnelStatus(state: .failed, tunnelName: name, message: "Handshake did not complete")
+        let blocked = TunnelStatus(state: .failed, tunnelName: name, message: "wireguard-go exited", killSwitch: true)
 
         let scenarios: [Scenario] = [
             Scenario(label: "connected", status: connected, samples: true, latency: 46),
@@ -117,6 +118,7 @@ enum PreviewRenderer {
             Scenario(label: "idle-unknown-exit", exit: false),
             Scenario(label: "noresponse", status: noResponse, samples: true, latency: nil),
             Scenario(label: "failed", status: failed),
+            Scenario(label: "blocked", status: blocked),
             Scenario(label: "invalid", profiles: ["home", "office"], broken: "broken", selected: "broken", exit: false),
             Scenario(label: "empty", profiles: [], selected: nil, exit: false),
             Scenario(label: "helper-setup", helper: .notInstalled),

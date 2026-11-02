@@ -32,6 +32,7 @@ private final class Env {
     var statuses: [TunnelStatus] = []
     var resolver = FakeResolver(table: ["vpn.example.com": "203.0.113.5"])
     let dns: FakeDNSConfigurator
+    let firewall = FakeFirewall()
     var manager: TunnelManager!
 
     init(wifiDNS: [String] = []) {
@@ -48,7 +49,7 @@ private final class Env {
                 self.launchers.append(l)
                 return l
             },
-            resolver: resolver, store: store, dns: dns, log: { _ in },
+            resolver: resolver, store: store, dns: dns, firewall: firewall, log: { _ in },
             now: { Date(timeIntervalSince1970: 1_000) })
         manager.onStatusChange = { [unowned self] in self.statuses.append($0) }
     }
@@ -162,7 +163,7 @@ private let bypassDelete = "/sbin/route -q -n delete -inet 203.0.113.5"
     let r = env.runner
     let manager = TunnelManager(runner: r, makeLauncher: { [unowned env] in
         let l = FakeLauncher(runner: r); env.launchers.append(l); return l
-    }, resolver: env.resolver, store: env.store, dns: env.dns, log: { _ in })
+    }, resolver: env.resolver, store: env.store, dns: env.dns, firewall: env.firewall, log: { _ in })
     #expect(throws: TunnelError.resolve("vpn.example.com")) {
         try manager.up(name: "home", configText: configText())
     }
@@ -478,4 +479,165 @@ private func staleState() -> PersistedState {
     #expect(decoded.rejectRoutes.isEmpty)
     #expect(decoded.tunnelName == st.tunnelName)
     #expect(try JSONDecoder().decode(PersistedState.self, from: data) == st)
+}
+
+// MARK: - Kill switch
+
+@Test func noKillSwitchUnlessAsked() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText())
+    #expect(env.firewall.loaded.isEmpty)
+    #expect(env.manager.status().killSwitch == false)
+    env.launcher.simulateExit()
+    #expect(env.manager.status().state == .failed)
+    #expect(!env.manager.status().isBlockedByKillSwitch)
+}
+
+@Test func killSwitchArmedBeforeTunnelStartsThenCoversIt() throws {
+    let env = Env()
+    let r = env.runner
+    env.firewall.onEngage = { r.note("pf.engage") }
+    let status = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    #expect(status.killSwitch == true)
+    #expect(env.firewall.loaded.count == 2)
+    #expect(!env.firewall.loaded[0].contains("utun7"))
+    #expect(env.firewall.loaded[0].contains("to 203.0.113.5 port 51820"))
+    #expect(env.firewall.loaded[1].contains("pass quick on utun7 all"))
+    #expect(env.firewall.loaded[1].contains("192.168.0.0/16"))   // allowLAN defaults to on
+    let firstEngage = try #require(r.events.firstIndex(of: "pf.engage"))
+    let start = try #require(r.events.firstIndex(of: "launcher.start"))
+    #expect(firstEngage < start)
+    #expect(env.store.state?.killSwitch?.token == "t1")
+}
+
+@Test func killSwitchWithoutLAN() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true, allowLAN: false)
+    #expect(env.firewall.current?.contains("192.168.0.0/16") == false)
+}
+
+@Test func userDisconnectReleasesKillSwitch() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    _ = env.manager.down()
+    #expect(!env.firewall.isEngaged())
+    #expect(env.firewall.released == ["t1"])
+    #expect(env.store.state == nil)
+}
+
+@Test func tunnelDropKeepsBlockingUntilDisconnect() throws {
+    let env = Env(wifiDNS: ["8.8.8.8"])
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    env.launcher.simulateExit()
+    // Routes and DNS are restored, but pf keeps blocking (without the dead tunnel interface).
+    #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8"])
+    #expect(env.runner.ran(bypassDelete))
+    #expect(env.firewall.isEngaged())
+    #expect(env.firewall.current?.contains("utun7") == false)
+    #expect(env.firewall.released.isEmpty)
+    let s = env.manager.status()
+    #expect(s.isBlockedByKillSwitch)
+    #expect(s.tunnelName == "home")
+    #expect(env.store.state?.killSwitch?.token == "t1")
+    // "Allow internet"
+    #expect(env.manager.down() == .disconnected)
+    #expect(!env.firewall.isEngaged())
+    #expect(env.firewall.released == ["t1"])
+    #expect(env.store.state == nil)
+    #expect(env.manager.status() == .disconnected)
+}
+
+@Test func reconnectWhileBlockingNeverOpensTheGate() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    env.launcher.simulateExit()
+    let status = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    #expect(status.state == .connected)
+    #expect(env.firewall.released.isEmpty)       // never disengaged in between
+    #expect(env.firewall.tokensTaken == 1)       // the same pf reference carried over
+    // The hostname endpoint was resolved under a temporary DNS-allowing ruleset.
+    #expect(env.firewall.loaded.contains { $0.contains("port 53") })
+    #expect(env.firewall.current?.contains("port 53") == false)
+    #expect(env.firewall.current?.contains("pass quick on utun7 all") == true)
+}
+
+@Test func switchingTunnelsKeepsKillSwitchEngaged() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "A", configText: configText(), killSwitch: true)
+    _ = try env.manager.up(name: "B", configText: configText(), killSwitch: true)
+    #expect(env.firewall.released.isEmpty)
+    #expect(env.firewall.tokensTaken == 1)
+    #expect(env.manager.status().tunnelName == "B")
+}
+
+@Test func connectWithoutKillSwitchAfterDropReleasesIt() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    env.launcher.simulateExit()
+    _ = try env.manager.up(name: "home", configText: configText())
+    #expect(!env.firewall.isEngaged())
+    #expect(env.firewall.released == ["t1"])
+}
+
+@Test func failedConnectFromCleanStateReleasesKillSwitch() {
+    let env = Env()
+    env.runner.fail(cmd(route, "-q", "-n", "add", "-inet", "128.0.0.0/1", "-interface", "utun7"))
+    #expect(throws: TunnelError.self) {
+        try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    }
+    #expect(!env.firewall.isEngaged())
+    #expect(env.firewall.released == ["t1"])
+    #expect(env.manager.status() == .disconnected)
+}
+
+@Test func failedReconnectWhileBlockingStaysBlocked() throws {
+    let env = Env()
+    _ = try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    env.launcher.simulateExit()
+    env.runner.fail(cmd(route, "-q", "-n", "add", "-inet", "128.0.0.0/1", "-interface", "utun7"))
+    #expect(throws: TunnelError.self) {
+        try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    }
+    #expect(env.firewall.isEngaged())
+    #expect(env.firewall.released.isEmpty)
+    #expect(env.manager.status().isBlockedByKillSwitch)
+}
+
+@Test func killSwitchEngageFailureAbortsConnect() {
+    let env = Env()
+    env.firewall.failEngage = true
+    #expect(throws: TunnelError.self) {
+        try env.manager.up(name: "home", configText: configText(), killSwitch: true)
+    }
+    #expect(env.launchers.isEmpty)    // never started a tunnel it couldn't protect
+    #expect(env.manager.status() == .disconnected)
+}
+
+private func killSwitchState() -> PersistedState {
+    var s = staleState()
+    s.killSwitch = KillSwitchRecord(token: "t9", allowLAN: true,
+                                    endpoints: [Endpoint(host: "203.0.113.5", port: 51820)])
+    return s
+}
+
+@Test func helperRestartKeepsBlockingWhenRulesStillLoaded() throws {
+    let env = Env()
+    _ = try env.firewall.engage(rules: "loaded", token: "t9")
+    env.store.state = killSwitchState()
+    env.manager.cleanupStale()
+    #expect(env.firewall.isEngaged())
+    #expect(env.firewall.released.isEmpty)
+    #expect(env.dns.servers(of: "Wi-Fi") == ["8.8.8.8"])   // everything else is restored
+    #expect(env.manager.status().isBlockedByKillSwitch)
+    #expect(env.store.state?.killSwitch?.token == "t9")
+}
+
+@Test func rebootWipedRulesSoStaleKillSwitchIsReleased() {
+    let env = Env()
+    env.store.state = killSwitchState()
+    env.manager.cleanupStale()
+    #expect(env.firewall.released == ["t9"])
+    #expect(!env.firewall.isEngaged())
+    #expect(env.manager.status() == .disconnected)
+    #expect(env.store.state == nil)
 }

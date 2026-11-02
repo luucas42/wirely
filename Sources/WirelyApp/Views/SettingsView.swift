@@ -6,6 +6,8 @@ struct SettingsView: View {
     @ObservedObject var controller: ConnectionController
     @EnvironmentObject private var l10n: L10n
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
+    @AppStorage(KillSwitchSettings.enabledKey) private var killSwitch = true
+    @AppStorage(KillSwitchSettings.allowLANKey) private var allowLAN = true
     @State private var working = false
     @State private var message: String?
 
@@ -19,7 +21,7 @@ struct SettingsView: View {
             service.tabItem { Label(l10n(.service), systemImage: "shield.lefthalf.filled") }
             about.tabItem { Label(l10n(.about), systemImage: "info.circle") }
         }
-        .frame(width: 440, height: 230)
+        .frame(width: 460, height: 400)
     }
 
     private var general: some View {
@@ -28,6 +30,19 @@ struct SettingsView: View {
                 ForEach(AppLanguage.allCases) { Text($0.displayName).tag($0) }
             }
             Toggle(l10n(.notifications), isOn: $notificationsEnabled)
+            Section {
+                Toggle(isOn: $killSwitch) {
+                    Text(l10n(.killSwitch))
+                    Text(l10n(.killSwitchHint))
+                }
+                Toggle(isOn: $allowLAN) {
+                    Text(l10n(.allowLAN))
+                    Text(l10n(.allowLANHint))
+                }
+                .disabled(!killSwitch)
+            } footer: {
+                Text(l10n(.appliesNextConnect)).font(.footnote).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
     }

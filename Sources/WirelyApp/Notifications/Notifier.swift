@@ -36,6 +36,9 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         case .recovered(let name):
             content.title = l10n(.notifyRestoredTitle)
             content.body = name
+        case .blocked(let name):
+            content.title = l10n(.internetBlocked)
+            content.body = "\(name) — \(l10n(.notifyBlockedBody))"
         case .failed(let name, let message):
             content.title = l10n(.notifyFailedTitle)
             content.body = message.isEmpty ? name : "\(name) — \(message)"

@@ -14,29 +14,34 @@ public final class TunnelManager {
     private let resolver: EndpointResolver
     private let store: StateStore
     private let dns: DNSConfigurator
+    private let firewall: Firewall
     private let log: (String) -> Void
     private let now: () -> Date
 
     private var active: Active?
     private var lastFailed: TunnelStatus?
+    /// The tunnel dropped while its kill switch was armed: everything is torn down except the pf
+    /// rules, which keep blocking traffic until the user reconnects or disconnects.
+    private var held: PersistedState?
 
     public var onStatusChange: ((TunnelStatus) -> Void)?
 
     public init(runner: CommandRunner, makeLauncher: @escaping () -> WireGuardLauncher,
-                resolver: EndpointResolver, store: StateStore, dns: DNSConfigurator,
+                resolver: EndpointResolver, store: StateStore, dns: DNSConfigurator, firewall: Firewall,
                 log: @escaping (String) -> Void, now: @escaping () -> Date = Date.init) {
         self.runner = runner
         self.makeLauncher = makeLauncher
         self.resolver = resolver
         self.store = store
         self.dns = dns
+        self.firewall = firewall
         self.log = log
         self.now = now
     }
 
     // MARK: - up
 
-    public func up(name: String, configText: String) throws -> TunnelStatus {
+    public func up(name: String, configText: String, killSwitch: Bool = false, allowLAN: Bool = true) throws -> TunnelStatus {
         let started = DispatchTime.now()
         let config: TunnelConfig
         do {
@@ -45,15 +50,63 @@ public final class TunnelManager {
             throw TunnelError.config(e)
         }
 
-        if active != nil { _ = down() }
+        // Hand over from the current tunnel (or from blocking after a drop). If both sides use the
+        // kill switch, pf stays engaged throughout, so there's no unprotected gap while switching.
+        var blockToken: String?            // pf reference still held from before this call
+        var wasBlocking = false
+        if let a = active {
+            active = nil
+            let keep = killSwitch && a.state.killSwitch != nil
+            teardown(a.state, launcher: a.launcher, stopLauncher: true, keepKillSwitch: keep)
+            if keep { blockToken = a.state.killSwitch?.token; wasBlocking = true }
+            onStatusChange?(.disconnected)
+        }
+        if let h = held {
+            held = nil
+            if killSwitch {
+                blockToken = h.killSwitch?.token
+                wasBlocking = true
+            } else {
+                firewall.disengage(token: h.killSwitch?.token)
+            }
+            store.clear()
+        }
         lastFailed = nil
+
+        // While blocking, a hostname endpoint can't be resolved: briefly allow DNS for the lookup.
+        if wasBlocking, config.peers.contains(where: { $0.endpoint.map { IPAddress($0.host) == nil } ?? false }) {
+            _ = try? firewall.engage(rules: KillSwitchPlan.rules(iface: nil, endpoints: [], allowLAN: allowLAN,
+                                                                 allowDNS: true), token: blockToken)
+        }
 
         var resolved: [IPAddress?] = []
         for peer in config.peers {
             if let ep = peer.endpoint {
-                do { resolved.append(try resolver.resolve(ep)) } catch { throw TunnelError.resolve(ep.host) }
+                do {
+                    resolved.append(try resolver.resolve(ep))
+                } catch {
+                    if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN) }
+                    throw TunnelError.resolve(ep.host)
+                }
             } else {
                 resolved.append(nil)
+            }
+        }
+        let serverEndpoints: [Endpoint] = zip(config.peers, resolved).compactMap { peer, ip in
+            guard let ep = peer.endpoint, let ip else { return nil }
+            return Endpoint(host: ip.description, port: ep.port)
+        }
+
+        // Arm the kill switch before wireguard-go starts, with its servers already reachable.
+        var killRecord: KillSwitchRecord?
+        if killSwitch {
+            do {
+                let token = try firewall.engage(rules: KillSwitchPlan.rules(iface: nil, endpoints: serverEndpoints,
+                                                                            allowLAN: allowLAN), token: blockToken)
+                killRecord = KillSwitchRecord(token: token, allowLAN: allowLAN, endpoints: serverEndpoints)
+            } catch {
+                if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN) }
+                throw TunnelError.commandFailed("kill switch: \(describe(error))")
             }
         }
 
@@ -70,6 +123,10 @@ public final class TunnelManager {
             iface = try launcher.start()
         } catch {
             launcher.stop()
+            if let k = killRecord {
+                if wasBlocking { keepBlocking(name: name, token: k.token, allowLAN: allowLAN) }
+                else { firewall.disengage(token: k.token) }
+            }
             throw TunnelError.wireguard(describe(error))
         }
 
@@ -77,7 +134,7 @@ public final class TunnelManager {
             tunnelName: name, interface: iface, wireguardPID: launcher.pid,
             endpointRoutes: [], dnsBackups: [],
             dnsServers: config.interface.dnsServers, dnsSearch: config.interface.dnsSearchDomains,
-            connectedAt: now(), ignoredKeys: config.ignoredKeys)
+            connectedAt: now(), ignoredKeys: config.ignoredKeys, killSwitch: killRecord)
 
         do {
             // Persist incrementally so a crash mid-up leaves a record for cleanupStale().
@@ -120,6 +177,15 @@ public final class TunnelManager {
                 }
             }
 
+            if let k = killRecord {
+                do {
+                    _ = try firewall.engage(rules: KillSwitchPlan.rules(iface: iface, endpoints: k.endpoints,
+                                                                        allowLAN: k.allowLAN), token: k.token)
+                } catch {
+                    throw TunnelError.commandFailed("kill switch: \(describe(error))")
+                }
+            }
+
             if !config.interface.dnsServers.isEmpty {
                 // One read, one durable backup, one commit for every service.
                 let current: [DNSBackup]
@@ -131,7 +197,9 @@ public final class TunnelManager {
 
             try persist(state)
         } catch {
-            teardown(state, launcher: launcher, stopLauncher: true)
+            // A failed reconnect while the kill switch was already blocking keeps blocking.
+            teardown(state, launcher: launcher, stopLauncher: true, keepKillSwitch: wasBlocking)
+            if wasBlocking { keepBlocking(name: name, token: state.killSwitch?.token, allowLAN: allowLAN) }
             throw error
         }
 
@@ -151,6 +219,13 @@ public final class TunnelManager {
     @discardableResult
     public func down() -> TunnelStatus {
         lastFailed = nil
+        if let h = held {   // "Allow internet" after a drop
+            held = nil
+            firewall.disengage(token: h.killSwitch?.token)
+            store.clear()
+            log("kill switch released")
+            onStatusChange?(.disconnected)
+        }
         guard let a = active else { return .disconnected }
         let started = DispatchTime.now()
         active = nil
@@ -165,7 +240,8 @@ public final class TunnelManager {
     public func status() -> TunnelStatus {
         guard let a = active else { return lastFailed ?? .disconnected }
         var s = TunnelStatus(state: .connected, tunnelName: a.state.tunnelName, interface: a.state.interface,
-                             connectedAt: a.state.connectedAt, ignoredKeys: a.state.ignoredKeys)
+                             connectedAt: a.state.connectedAt, ignoredKeys: a.state.ignoredKeys,
+                             killSwitch: a.state.killSwitch != nil)
         do {
             let snap = try UAPI.parseGet(try a.launcher.get())
             s.rxBytes = snap.totalRx
@@ -217,14 +293,19 @@ public final class TunnelManager {
     // MARK: - stale cleanup
 
     public func cleanupStale() {
-        guard active == nil, let state = store.load() else { return }
+        guard active == nil, held == nil, let state = store.load() else { return }
         if let pid = state.wireguardPID {
             let out = runner.run(NetCommand("/bin/ps", ["-p", String(pid), "-o", "comm="])).stdout
             if out.contains("wireguard-go") {
                 _ = runner.run(NetCommand("/bin/kill", ["-TERM", String(pid)]))
             }
         }
-        teardown(state, launcher: nil, stopLauncher: false)
+        // pf rules survive a helper restart but not a reboot: only keep blocking if they're still loaded.
+        let stillBlocking = state.killSwitch != nil && firewall.isEngaged()
+        teardown(state, launcher: nil, stopLauncher: false, keepKillSwitch: stillBlocking)
+        if stillBlocking, let k = state.killSwitch {
+            hold(name: state.tunnelName, record: k, message: "Wirely servisi yeniden başladı; kill switch interneti engelliyor")
+        }
     }
 
     // MARK: - internals
@@ -232,16 +313,39 @@ public final class TunnelManager {
     private func handleUnexpectedExit(of launcher: WireGuardLauncher) {
         guard let a = active, a.launcher === launcher else { return }
         active = nil
-        teardown(a.state, launcher: launcher, stopLauncher: false)
-        let s = TunnelStatus(state: .failed, tunnelName: a.state.tunnelName, interface: a.state.interface,
-                             message: "wireguard-go beklenmedik şekilde kapandı",
-                             ignoredKeys: a.state.ignoredKeys)
-        lastFailed = s
-        onStatusChange?(s)
+        let message = "wireguard-go beklenmedik şekilde kapandı"
+        teardown(a.state, launcher: launcher, stopLauncher: false, keepKillSwitch: a.state.killSwitch != nil)
+        if let k = a.state.killSwitch {
+            hold(name: a.state.tunnelName, record: k, message: message)
+        } else {
+            lastFailed = TunnelStatus(state: .failed, tunnelName: a.state.tunnelName, interface: a.state.interface,
+                                      message: message, ignoredKeys: a.state.ignoredKeys)
+        }
+        if let s = lastFailed { onStatusChange?(s) }
+    }
+
+    /// Records that the kill switch keeps blocking after the tunnel is gone (and persists it, so a
+    /// helper restart still knows), with block-only rules: no tunnel interface, servers reachable.
+    private func hold(name: String, record: KillSwitchRecord, message: String) {
+        _ = try? firewall.engage(rules: KillSwitchPlan.rules(iface: nil, endpoints: record.endpoints,
+                                                             allowLAN: record.allowLAN), token: record.token)
+        let h = PersistedState(tunnelName: name, interface: "", wireguardPID: nil, endpointRoutes: [],
+                               dnsBackups: [], dnsServers: [], dnsSearch: [], connectedAt: now(),
+                               ignoredKeys: [], killSwitch: record)
+        held = h
+        do { try store.save(h) } catch { log("Durum kaydedilemedi: \(describe(error))") }
+        lastFailed = TunnelStatus(state: .failed, tunnelName: name, message: message, killSwitch: true)
+        log("kill switch holding: \(message)")
+    }
+
+    private func keepBlocking(name: String, token: String?, allowLAN: Bool) {
+        hold(name: name, record: KillSwitchRecord(token: token, allowLAN: allowLAN, endpoints: []),
+             message: "Bağlantı kurulamadı; kill switch interneti engelliyor")
     }
 
     /// Undoes everything recorded in `state`. Failures are logged and never stop the remaining steps.
-    private func teardown(_ state: PersistedState, launcher: WireGuardLauncher?, stopLauncher: Bool) {
+    private func teardown(_ state: PersistedState, launcher: WireGuardLauncher?, stopLauncher: Bool,
+                          keepKillSwitch: Bool = false) {
         if let launcher {
             launcher.onUnexpectedExit = nil
             if stopLauncher { launcher.stop() }
@@ -257,6 +361,7 @@ public final class TunnelManager {
             let c = NetPlan.routeDelete(n)
             if runner.run(c).status != 0 { log("Yönlendirme silinemedi: \(c)") }
         }
+        if let k = state.killSwitch, !keepKillSwitch { firewall.disengage(token: k.token) }
         store.clear()
     }
 

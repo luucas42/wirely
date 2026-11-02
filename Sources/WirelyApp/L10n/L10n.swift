@@ -37,6 +37,9 @@ enum L: String, CaseIterable {
     // Settings
     case settings, language, notifications
     case notifyConnectedTitle, notifyDroppedTitle, notifyRestoredTitle, notifyFailedTitle
+    // Kill switch
+    case killSwitch, killSwitchHint, allowLAN, allowLANHint, appliesNextConnect
+    case internetBlocked, internetBlockedHint, reconnect, allowInternet, notifyBlockedBody
     // Generic
     case genericError, connectFailed, disconnectFailed
     // Config errors

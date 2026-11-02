@@ -31,10 +31,13 @@ struct StatusCard: View {
             (.upload, live ? Formatters.rate(rates.tx, locale: l10n.locale) : "—"),
         ]
 
+        // Blocked by the kill switch: every stat is "—", so give the space to the explanation and actions.
+        let blocked = status.isBlockedByKillSwitch
         return HStack(spacing: 20) {
             titleBlock(phase: phase, status: status, now: now)
-                .frame(width: 270, alignment: .leading)
-            statsBlock(stats)
+                .frame(width: blocked ? nil : 270, alignment: .leading)
+                .frame(maxWidth: blocked ? .infinity : nil, alignment: .leading)
+            if !blocked { statsBlock(stats) }
             trailing(phase: phase, status: status, now: now)
         }
         .padding(.horizontal, 28)
@@ -51,7 +54,7 @@ struct StatusCard: View {
         case .connected: return l10n(.connected)
         case .connecting: return l10n(.connecting)
         case .noResponse: return l10n(.noResponse)
-        case .failed: return l10n(.failed)
+        case .failed: return controller.status.isBlockedByKillSwitch ? l10n(.internetBlocked) : l10n(.failed)
         case .idle, .invalid: return l10n(.notConnected)
         }
     }
@@ -84,7 +87,9 @@ struct StatusCard: View {
             let elapsed = status.connectedAt.map { Formatters.elapsed(from: $0, to: now) } ?? "00:00:00"
             return (join(l10n.format(.connectedFor, elapsed)), false)
         case .noResponse: return (l10n(.noResponseHint), true)
-        case .failed: return (status.message ?? controller.lastError ?? l10n(.genericError), true)
+        case .failed:
+            if status.isBlockedByKillSwitch { return (l10n(.internetBlockedHint), true) }
+            return (status.message ?? controller.lastError ?? l10n(.genericError), true)
         case .invalid: return (configError, true)
         case .connecting, .idle: return (join(tunnel.name), false)
         }
@@ -165,6 +170,16 @@ struct StatusCard: View {
                 .foregroundStyle(Theme.cobalt)
                 .frame(width: 120, height: 46)
                 .background(Capsule().fill(Theme.cobalt.opacity(0.14)))
+        } else if phase == .failed && controller.status.isBlockedByKillSwitch {
+            HStack(spacing: 10) {
+                PillButton(kind: .outline, action: { Task { await controller.disconnect() } }) {
+                    Text(l10n(.allowInternet)).lineLimit(1).fixedSize()
+                }
+                PillButton(action: { Task { await controller.connect(tunnel) } }) {
+                    Text(l10n(.reconnect)).lineLimit(1).fixedSize()
+                }
+                .disabled(!ready)
+            }
         } else if phase == .connected || phase == .noResponse {
             PillButton(kind: .outline, action: { Task { await controller.disconnect() } }) {
                 Text(l10n(.disconnect))
