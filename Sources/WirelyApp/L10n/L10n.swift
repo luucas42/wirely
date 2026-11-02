@@ -36,6 +36,10 @@ enum L: String, CaseIterable {
     case serviceStarting, serviceExplain, serviceNewerApp
     // Settings
     case settings, language, notifications
+    case dropHereShort, exportAction, exportHint, notificationsHint, autoReconnect, autoReconnectHint
+    case openAtLogin, openAtLoginHint, openAtLoginUnavailable, loginItemApproval, openLoginItems
+    case connectOnLaunch, connectOnLaunchHint, backgroundService, serviceDescription
+    case serviceVersionLine, reinstall, uninstallConfirm
     case notifyConnectedTitle, notifyDroppedTitle, notifyRestoredTitle, notifyFailedTitle
     // Kill switch
     case killSwitch, killSwitchHint, allowLAN, allowLANHint, appliesNextConnect

@@ -3,6 +3,9 @@ import AppKit
 
 /// The in-window Settings page: header with Done, a section rail and a content card.
 struct SettingsPage: View {
+    @ObservedObject var store: TunnelStore
+    @ObservedObject var controller: ConnectionController
+    var actions = ProfileActions()
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var l10n: L10n
     @Environment(\.previewMode) private var previewMode
@@ -118,9 +121,20 @@ struct SettingsPage: View {
     }
 
     private var content: some View {
-        SectionPlaceholder(section: router.section)
+        section
             .padding(.horizontal, 28).padding(.vertical, 26)
             .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var section: some View {
+        switch router.section {
+        case .profiles: ProfilesSection(store: store, controller: controller, actions: actions)
+        case .connection: ConnectionSection(controller: controller)
+        case .general: GeneralSection()
+        case .service: ServiceSection(controller: controller)
+        case .about: SectionPlaceholder(section: .about)
+        }
     }
 }
 

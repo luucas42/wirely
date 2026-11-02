@@ -135,6 +135,9 @@ enum PreviewRenderer {
             Scenario(label: "helper-setup", helper: .notInstalled),
             Scenario(label: "settings-profiles", settings: .profiles),
             Scenario(label: "settings-connection", settings: .connection),
+            Scenario(label: "settings-general", settings: .general),
+            Scenario(label: "settings-service", settings: .service),
+            Scenario(label: "settings-profiles-empty", profiles: [], selected: nil, exit: false, settings: .profiles),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
 
@@ -147,6 +150,9 @@ enum PreviewRenderer {
         var tr = Scenario(label: "connected-tr", status: connected, samples: true, latency: 46)
         tr.language = .tr
         render(tr, scheme: .dark, now: now, into: directory)
+        var generalTR = Scenario(label: "settings-general-tr", settings: .general)
+        generalTR.language = .tr
+        render(generalTR, scheme: .dark, now: now, into: directory)
 
         // Debug: land-mask sanity checks (whole world; Istanbul + Frankfurt framing).
         let l10n = L10n(fixed: .en)

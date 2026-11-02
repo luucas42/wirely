@@ -17,13 +17,19 @@ struct MainView: View {
     @State private var deleting: StoredTunnel?
     @State private var importErrors: [String] = []
     @State private var showImportErrors = false
+    @State private var exportError: String?
 
     private var selected: StoredTunnel? { route.selected }
 
     var body: some View {
         Group {
             if router.showingSettings {
-                SettingsPage()
+                SettingsPage(store: store, controller: controller,
+                             actions: ProfileActions(onImport: { importing = true },
+                                                     onEdit: { editing = $0 },
+                                                     onRename: { renaming = $0 },
+                                                     onDelete: { deleting = $0 },
+                                                     onExport: export))
             } else {
                 mapPage
             }
@@ -72,6 +78,12 @@ struct MainView: View {
             Button(l10n(.done)) {}
         } message: {
             Text(importErrors.joined(separator: "\n"))
+        }
+        .alert(l10n(.genericError), isPresented: Binding(get: { exportError != nil },
+                                                        set: { if !$0 { exportError = nil } })) {
+            Button(l10n(.done)) {}
+        } message: {
+            Text(exportError ?? "")
         }
         .onAppear { ensureSelection(preferConnected: true) }
         .onChange(of: store.tunnels) { _ in ensureSelection(preferConnected: false) }
@@ -184,6 +196,14 @@ struct MainView: View {
             importErrors = errors
             showImportErrors = true
         }
+    }
+
+    private func export(_ t: StoredTunnel) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(t.name).conf"
+        panel.allowedContentTypes = [UTType(filenameExtension: "conf")].compactMap { $0 }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do { try store.export(t.name, to: url) } catch { exportError = l10n.message(for: error) }
     }
 
     private func delete(_ t: StoredTunnel) {
