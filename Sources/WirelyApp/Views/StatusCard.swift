@@ -32,7 +32,8 @@ struct StatusCard: View {
         ]
 
         // Blocked by the kill switch: every stat is "—", so give the space to the explanation and actions.
-        let blocked = status.isBlockedByKillSwitch
+        let reconnecting = controller.reconnectStatus?.name == tunnel.name
+        let blocked = status.isBlockedByKillSwitch || reconnecting
         return HStack(spacing: 20) {
             titleBlock(phase: phase, status: status, now: now)
                 .frame(width: blocked ? nil : 270, alignment: .leading)
@@ -50,6 +51,7 @@ struct StatusCard: View {
     // MARK: Pieces
 
     private func title(for phase: RoutePhase) -> String {
+        if isReconnecting { return l10n(.reconnecting) }
         switch phase {
         case .connected: return l10n(.connected)
         case .connecting: return l10n(.connecting)
@@ -59,8 +61,10 @@ struct StatusCard: View {
         }
     }
 
+    private var isReconnecting: Bool { controller.reconnectStatus?.name == tunnel.name }
+
     private func titleBlock(phase: RoutePhase, status: TunnelStatus, now: Date) -> some View {
-        let (sub, isAlert) = subline(phase: phase, status: status, now: now)
+        let (sub, isAlert) = isReconnecting ? (reconnectLine(now: now), false) : subline(phase: phase, status: status, now: now)
         return VStack(alignment: .leading, spacing: 4) {
             Text(title(for: phase))
                 .font(.mr(30, 800))
@@ -76,6 +80,12 @@ struct StatusCard: View {
                 .truncationMode(.tail)
                 .minimumScaleFactor(0.85)
         }
+    }
+
+    private func reconnectLine(now: Date) -> String {
+        guard let at = controller.reconnectStatus?.nextAt, at > now else { return l10n(.connecting) }
+        let seconds = Int(at.timeIntervalSince(now).rounded(.up))
+        return l10n.format(.reconnectingIn, l10n.format(.secondsShort, seconds))
     }
 
     private func subline(phase: RoutePhase, status: TunnelStatus, now: Date) -> (String, Bool) {
@@ -170,6 +180,22 @@ struct StatusCard: View {
                 .foregroundStyle(Theme.cobalt)
                 .frame(width: 120, height: 46)
                 .background(Capsule().fill(Theme.cobalt.opacity(0.14)))
+        } else if isReconnecting {
+            HStack(spacing: 10) {
+                if controller.status.isBlockedByKillSwitch {
+                    PillButton(kind: .outline, action: { Task { await controller.disconnect() } }) {
+                        Text(l10n(.allowInternet)).lineLimit(1).fixedSize()
+                    }
+                } else {
+                    PillButton(kind: .outline, action: { controller.cancelReconnect() }) {
+                        Text(l10n(.stop)).lineLimit(1).fixedSize()
+                    }
+                }
+                PillButton(action: { controller.reconnectNow() }) {
+                    Text(l10n(.tryNow)).lineLimit(1).fixedSize()
+                }
+                .disabled(!ready)
+            }
         } else if phase == .failed && controller.status.isBlockedByKillSwitch {
             HStack(spacing: 10) {
                 PillButton(kind: .outline, action: { Task { await controller.disconnect() } }) {

@@ -54,6 +54,7 @@ struct MenuBarView: View {
     private func statusLine(now: Date) -> some View {
         let s = controller.status
         let (title, color): (String, Color) = {
+            if controller.reconnectStatus != nil { return (l10n(.reconnecting), Theme.signal) }
             switch RouteModel.phase(of: activeTunnel, status: s, now: now) {
             case .connected: return (l10n(.connected), Theme.cobalt)
             case .connecting: return (l10n(.connecting), Theme.signal)

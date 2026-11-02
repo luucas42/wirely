@@ -65,6 +65,14 @@ let stringsTR: [L: String] = [
     .allowInternet: "İnternete izin ver",
     .notifyBlockedBody: "Tünel düştü. Yeniden bağlanana ya da bağlantıyı kesene kadar internet engelli.",
 
+    // Reconnect
+    .reconnecting: "Yeniden bağlanıyor…",
+    .reconnectingIn: "%@ içinde yeniden denenecek",
+    .tryNow: "Şimdi dene",
+    .stop: "Durdur",
+    .reconnectingAutomatically: "Otomatik olarak yeniden bağlanılıyor.",
+    .secondsShort: "%d sn",
+
     .genericError: "Bir şeyler ters gitti",
     .connectFailed: "Bağlanılamadı",
     .disconnectFailed: "Bağlantı kesilemedi",

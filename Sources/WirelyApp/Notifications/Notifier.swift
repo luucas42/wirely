@@ -13,7 +13,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         UserDefaults.standard.object(forKey: "notificationsEnabled") as? Bool ?? true
     }
 
-    func post(_ e: ConnectionEvent, l10n: L10n) {
+    /// `reconnecting` appends the "retrying automatically" note to drop / block bodies.
+    func post(_ e: ConnectionEvent, l10n: L10n, reconnecting: Bool = false) {
         guard available, enabled else { return }
         let center = UNUserNotificationCenter.current()
         if !authorizationRequested {
@@ -30,6 +31,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         case .dropped(let name):
             content.title = l10n(.notifyDroppedTitle)
             content.body = name
+            if reconnecting { content.body += " " + l10n(.reconnectingAutomatically) }
         case .noResponse(let name):
             content.title = l10n(.noResponse)
             content.body = "\(name) — \(l10n(.noResponseHint))"
@@ -39,6 +41,7 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         case .blocked(let name):
             content.title = l10n(.internetBlocked)
             content.body = "\(name) — \(l10n(.notifyBlockedBody))"
+            if reconnecting { content.body += " " + l10n(.reconnectingAutomatically) }
         case .failed(let name, let message):
             content.title = l10n(.notifyFailedTitle)
             content.body = message.isEmpty ? name : "\(name) — \(message)"

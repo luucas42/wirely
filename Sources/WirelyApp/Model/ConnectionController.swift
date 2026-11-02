@@ -1,7 +1,18 @@
 import Foundation
+import AppKit
+import Network
 @preconcurrency import WirelyCore
 
 enum HelperState: Equatable { case checking, notInstalled, outdated(Int), ready }
+
+/// Automatic reconnect in progress for `name`, as the UI shows it.
+struct ReconnectStatus: Equatable {
+    var name: String
+    var attempts: Int
+    var nextAt: Date?
+}
+
+private final class PathState: @unchecked Sendable { var satisfied = true }
 
 struct ThroughputSample: Identifiable {
     let id: Date
@@ -16,6 +27,8 @@ final class ConnectionController: ObservableObject {
     @Published var samples: [ThroughputSample] = []
     @Published var busy = false
     @Published var lastError: String?
+    /// Non-nil while the planner is waiting to retry or retrying a dropped tunnel.
+    @Published var reconnectStatus: ReconnectStatus?
 
     private let queue = DispatchQueue(label: "wirely.helper-client")
     private let client = HelperClient()
@@ -26,6 +39,12 @@ final class ConnectionController: ObservableObject {
     private let notifier = Notifier()
     /// Exit city of the live tunnel for the "Connected to …" body; set by the app root.
     var exitCity: () -> String? = { nil }
+    /// Resolves a profile name to its stored tunnel; set by the app root.
+    var tunnelNamed: (String) -> StoredTunnel? = { _ in nil }
+    private var planner = ReconnectPlanner()
+    private var launchConnectDone = false
+    private var wakeObserver: NSObjectProtocol?
+    private var pathMonitor: NWPathMonitor?
     private var lastSample: (name: String?, connectedAt: Date?, date: Date, rx: UInt64, tx: UInt64)?
 
     func start() {
@@ -36,12 +55,72 @@ final class ConnectionController: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.reconnectNow() }
+        }
+        let monitor = NWPathMonitor()
+        // Only touched on the monitor's serial queue.
+        let last = PathState()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            defer { last.satisfied = satisfied }
+            guard satisfied, !last.satisfied else { return }
+            Task { @MainActor in self?.reconnectNow() }
+        }
+        monitor.start(queue: DispatchQueue(label: "wirely.path-monitor"))
+        pathMonitor = monitor
+    }
+
+    private func refreshReconnectStatus() {
+        let next: ReconnectStatus? = planner.isActive
+            ? planner.target.map { ReconnectStatus(name: $0, attempts: planner.attempts, nextAt: planner.nextAt) }
+            : nil
+        if reconnectStatus != next { reconnectStatus = next }
+    }
+
+    /// Stops automatic retrying; the tunnel stays as it is.
+    func cancelReconnect() {
+        planner.cancel()
+        refreshReconnectStatus()
+    }
+
+    /// Makes a pending retry due now (also called on wake and when the network returns).
+    func reconnectNow() {
+        planner.nudge(now: Date())
+        refreshReconnectStatus()
+    }
+
+    private func reconnectIfDue() {
+        guard !busy, let name = planner.due(now: Date()) else { return }
+        guard let t = tunnelNamed(name), t.config != nil else {
+            planner.cancel()
+            refreshReconnectStatus()
+            return
+        }
+        planner.attemptStarted()
+        refreshReconnectStatus()
+        Task {
+            await connect(t, auto: true)
+            planner.attemptFinished(connected: status.state == .connected && status.tunnelName == name, now: Date())
+            refreshReconnectStatus()
+        }
+    }
+
+    /// Once per process, after the first good poll: bring `lastProfile` up if the user asked for it.
+    private func connectOnLaunchIfNeeded() {
+        guard !launchConnectDone else { return }
+        launchConnectDone = true
+        guard AppPreferences.connectOnLaunch, status.state == .disconnected,
+              let name = AppPreferences.lastProfile, let t = tunnelNamed(name), t.config != nil else { return }
+        Task { await connect(t) }
     }
 
     private func tick() {
         if helperState == .ready {
             tickCount = 0
             poll()
+            reconnectIfDue()
             return
         }
         tickCount += 1
@@ -94,7 +173,10 @@ final class ConnectionController: ObservableObject {
             pollInFlight = false
             switch result {
             case .success(let r):
-                if let s = r.status { apply(s) }
+                if let s = r.status {
+                    apply(s)
+                    connectOnLaunchIfNeeded()
+                }
             case .failure(.notRunning):
                 helperState = .checking
                 apply(.disconnected)
@@ -105,7 +187,13 @@ final class ConnectionController: ObservableObject {
     }
 
     private func apply(_ s: TunnelStatus) {
-        for e in detector.update(s, now: Date(), exitCity: exitCity()) { notifier.post(e, l10n: .shared) }
+        let events = detector.update(s, now: Date(), exitCity: exitCity())
+        planner.observe(s, now: Date(), enabled: AppPreferences.autoReconnect)
+        refreshReconnectStatus()
+        for e in events { notifier.post(e, l10n: .shared, reconnecting: planner.isActive) }
+        if s.state == .connected, let name = s.tunnelName, AppPreferences.lastProfile != name {
+            AppPreferences.lastProfile = name
+        }
         if status != s { status = s }
         guard s.state == .connected || s.state == .connecting else {
             lastSample = nil
@@ -134,10 +222,15 @@ final class ConnectionController: ObservableObject {
 
     // MARK: Actions
 
-    func connect(_ tunnel: StoredTunnel) async {
+    /// `auto` marks a planner-driven retry: it neither resets the planner nor reports errors.
+    func connect(_ tunnel: StoredTunnel, auto: Bool = false) async {
         guard !busy else { return }
+        if !auto {
+            planner.userConnecting(tunnel.name)
+            refreshReconnectStatus()
+        }
         busy = true
-        lastError = nil
+        if !auto { lastError = nil }
         defer { busy = false }
         // Replacing a live tunnel tears the old one down: not a drop.
         if status.state == .connected, status.tunnelName != tunnel.name { detector.userRequestedDisconnect() }
@@ -145,16 +238,18 @@ final class ConnectionController: ObservableObject {
                                     killSwitch: KillSwitchSettings.enabled, allowLAN: KillSwitchSettings.allowLAN)
         switch await call(request) {
         case .success(let r):
-            if !r.ok { lastError = Self.describe(r, fallback: .connectFailed) }
+            if !r.ok, !auto { lastError = Self.describe(r, fallback: .connectFailed) }
             if let s = r.status { apply(s) }
         case .failure(let e):
             if e == .notRunning { helperState = .checking }
-            lastError = L10n.shared.describe(e)
+            if !auto { lastError = L10n.shared.describe(e) }
         }
     }
 
     func disconnect() async {
         guard !busy else { return }
+        planner.userDisconnected()
+        refreshReconnectStatus()
         busy = true
         lastError = nil
         defer { busy = false }

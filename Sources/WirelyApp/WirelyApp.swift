@@ -4,6 +4,8 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Set by `WirelyApp` once the store exists, so Finder "open with" can import.
     @MainActor static var store: TunnelStore?
+    /// Set by `WirelyApp`; started at launch so reconnect and connect-on-launch work with no window.
+    @MainActor static var controller: ConnectionController?
 
     @MainActor
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -17,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        AppDelegate.controller?.start()
         // Evaluated here so the launch Apple event is still current; starts menu-bar only.
         if LoginItem.launchedAtLogin {
             DispatchQueue.main.async {
@@ -55,8 +58,10 @@ public struct WirelyApp: App {
         _controller = StateObject(wrappedValue: c)
         let r = RouteModel(store: s, controller: c)
         c.exitCity = { [weak r] in MainActor.assumeIsolated { r?.exit?.city } }
+        c.tunnelNamed = { [weak s] name in MainActor.assumeIsolated { s?.tunnels.first { $0.name == name } } }
         _route = StateObject(wrappedValue: r)
         AppDelegate.store = s
+        AppDelegate.controller = c
     }
 
     public var body: some Scene {

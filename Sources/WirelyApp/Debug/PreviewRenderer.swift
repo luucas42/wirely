@@ -46,6 +46,7 @@ enum PreviewRenderer {
         var latency: Double?
         var language = AppLanguage.en
         var menuBar = false
+        var reconnect: ReconnectStatus?
     }
 
     private static func store(for s: Scenario) -> TunnelStore {
@@ -64,6 +65,7 @@ enum PreviewRenderer {
         let c = ConnectionController()
         c.helperState = s.helper
         c.status = s.status
+        c.reconnectStatus = s.reconnect
         if s.samples {
             let now = Date()
             var list: [ThroughputSample] = []
@@ -109,6 +111,8 @@ enum PreviewRenderer {
         noResponse.txBytes = 148
         let connecting = TunnelStatus(state: .connecting, tunnelName: name, endpoint: "\(exitIP):51820")
         let failed = TunnelStatus(state: .failed, tunnelName: name, message: "Handshake did not complete")
+        let blockedRetry = TunnelStatus(state: .failed, tunnelName: name, message: "Handshake did not complete",
+                                        killSwitch: true)
         let blocked = TunnelStatus(state: .failed, tunnelName: name, message: "wireguard-go exited", killSwitch: true)
 
         let scenarios: [Scenario] = [
@@ -119,6 +123,8 @@ enum PreviewRenderer {
             Scenario(label: "noresponse", status: noResponse, samples: true, latency: nil),
             Scenario(label: "failed", status: failed),
             Scenario(label: "blocked", status: blocked),
+            Scenario(label: "reconnecting", status: blockedRetry,
+                     reconnect: ReconnectStatus(name: name, attempts: 2, nextAt: now.addingTimeInterval(12))),
             Scenario(label: "invalid", profiles: ["home", "office"], broken: "broken", selected: "broken", exit: false),
             Scenario(label: "empty", profiles: [], selected: nil, exit: false),
             Scenario(label: "helper-setup", helper: .notInstalled),

@@ -40,6 +40,8 @@ enum L: String, CaseIterable {
     // Kill switch
     case killSwitch, killSwitchHint, allowLAN, allowLANHint, appliesNextConnect
     case internetBlocked, internetBlockedHint, reconnect, allowInternet, notifyBlockedBody
+    // Reconnect
+    case reconnecting, reconnectingIn, tryNow, stop, reconnectingAutomatically, secondsShort
     // Generic
     case genericError, connectFailed, disconnectFailed
     // Config errors

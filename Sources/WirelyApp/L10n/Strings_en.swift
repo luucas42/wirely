@@ -65,6 +65,14 @@ let stringsEN: [L: String] = [
     .allowInternet: "Allow internet",
     .notifyBlockedBody: "The tunnel dropped. Internet stays blocked until you reconnect or disconnect.",
 
+    // Reconnect
+    .reconnecting: "Reconnecting…",
+    .reconnectingIn: "Trying again in %@",
+    .tryNow: "Try now",
+    .stop: "Stop",
+    .reconnectingAutomatically: "Reconnecting automatically.",
+    .secondsShort: "%d s",
+
     .genericError: "Something went wrong",
     .connectFailed: "Could not connect",
     .disconnectFailed: "Could not disconnect",
