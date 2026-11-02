@@ -10,6 +10,7 @@ struct MainView: View {
 
     @EnvironmentObject private var l10n: L10n
     @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var updates: UpdateChecker
     @Environment(\.previewMode) private var previewMode
     @State private var importing = false
     @State private var editing: StoredTunnel?
@@ -18,6 +19,7 @@ struct MainView: View {
     @State private var importErrors: [String] = []
     @State private var showImportErrors = false
     @State private var exportError: String?
+    @State private var notesRelease: ReleaseInfo?
 
     private var selected: StoredTunnel? { route.selected }
 
@@ -72,6 +74,10 @@ struct MainView: View {
                 }
                 renaming = nil
             }, onCancel: { renaming = nil })
+                .environmentObject(l10n)
+        }
+        .sheet(item: $notesRelease) { r in
+            ReleaseNotesSheet(release: r)
                 .environmentObject(l10n)
         }
         .alert(l10n(.importFailed), isPresented: $showImportErrors) {
@@ -155,6 +161,11 @@ struct MainView: View {
                 BannerView(text: l10n(.serviceUpdateNeeded), actionTitle: l10n(.update),
                            action: { Task { await controller.installHelper() } })
             }
+        }
+        if let release = updates.bannerRelease {
+            BannerView(text: l10n.format(.updateAvailableTitle, release.version.description),
+                       actionTitle: l10n(.whatsNew), action: { notesRelease = release },
+                       onClose: { updates.dismissBanner() })
         }
         if let msg = controller.lastError {
             BannerView(icon: .warning, text: msg, onClose: { controller.lastError = nil })

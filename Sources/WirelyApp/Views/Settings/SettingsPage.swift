@@ -133,30 +133,7 @@ struct SettingsPage: View {
         case .connection: ConnectionSection(controller: controller)
         case .general: GeneralSection()
         case .service: ServiceSection(controller: controller)
-        case .about: SectionPlaceholder(section: .about)
-        }
-    }
-}
-
-/// Stand-in for a section's content until the real sections land.
-private struct SectionPlaceholder: View {
-    let section: SettingsSection
-    @EnvironmentObject private var l10n: L10n
-
-    private var line: String {
-        switch section {
-        case .profiles: return l10n(.dropHere)
-        case .connection: return l10n(.killSwitchHint)
-        case .general: return l10n(.notifications)
-        case .service: return l10n(.serviceExplain)
-        case .about: return l10n(.credits)
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(section.title(l10n)).font(.mr(22, 800)).foregroundStyle(Theme.ink)
-            Text(line).font(.mr(13, 500)).foregroundStyle(Theme.secondary)
+        case .about: AboutSection()
         }
     }
 }

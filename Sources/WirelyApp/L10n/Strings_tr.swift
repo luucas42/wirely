@@ -142,6 +142,11 @@ let stringsTR: [L: String] = [
     .updateCheckFailed: "Güncellemeler denetlenemedi.",
     .checkAutomatically: "Otomatik denetle",
     .releaseNotes: "Sürüm notları",
+    .tagline: "Mac için küçük bir WireGuard istemcisi.",
+    .github: "GitHub",
+    .currentVersion: "Sürüm %@",
+    .connectOnLaunchHintNone: "En son kullandığın profile bağlanır.",
+    .creditsLines: "wireguard-go, MIT Lisansı\nManrope, SIL Open Font License 1.1\nNatural Earth kara verisi, kamu malı\nSunucu konumu ipwho.is ve ipinfo.io'dan",
 
     .errUnsupportedFile: "%@: desteklenmeyen dosya türü",
     .errZipOpen: "%@: zip dosyası açılamadı",

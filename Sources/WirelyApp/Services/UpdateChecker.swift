@@ -69,6 +69,9 @@ final class UpdateChecker: ObservableObject {
         defaults.set(release.version.description, forKey: Key.dismissed)
     }
 
+    /// Fixed state for `PreviewRenderer`.
+    func setPreview(_ state: State) { self.state = state }
+
     private func run(manual: Bool) async {
         let previous = state
         state = .checking

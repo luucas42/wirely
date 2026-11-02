@@ -44,7 +44,8 @@ struct GeneralSection: View {
                 ToggleRow(title: l10n(.notifications), hint: l10n(.notificationsHint), isOn: $notifications)
                 loginRow
                 ToggleRow(title: l10n(.connectOnLaunch),
-                          hint: l10n.format(.connectOnLaunchHint, AppPreferences.lastProfile ?? "—"),
+                          hint: AppPreferences.lastProfile.map { l10n.format(.connectOnLaunchHint, $0) }
+                              ?? l10n(.connectOnLaunchHintNone),
                           isOn: $connectOnLaunch)
             }
         }

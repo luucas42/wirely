@@ -67,6 +67,7 @@ enum L: String, CaseIterable {
     // Updates
     case updateAvailableTitle, updateAvailableBody, whatsNew, downloadUpdate, checkForUpdates, checkingForUpdates
     case upToDate, updateCheckFailed, checkAutomatically, releaseNotes
+    case tagline, github, currentVersion, connectOnLaunchHintNone, creditsLines
     // Store / installer errors
     case errUnsupportedFile, errZipOpen, errNoConfInZip, errProfileNotFound, errFileIO
     case errInstallCancelled, errInstallMissingFiles, errInstallFailed, errExitCode

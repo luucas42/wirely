@@ -6,6 +6,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor static var store: TunnelStore?
     /// Set by `WirelyApp`; started at launch so reconnect and connect-on-launch work with no window.
     @MainActor static var controller: ConnectionController?
+    /// Set by `WirelyApp`; checked at launch and hourly (never while rendering previews).
+    @MainActor static var updates: UpdateChecker?
+    private var updateTimer: Timer?
 
     @MainActor
     func applicationWillFinishLaunching(_ notification: Notification) {
@@ -20,6 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         AppDelegate.controller?.start()
+        if let updates = AppDelegate.updates {
+            Task { await updates.checkIfDue() }
+            updateTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { _ in
+                Task { @MainActor in await updates.checkIfDue() }
+            }
+        }
         // Evaluated here so the launch Apple event is still current; starts menu-bar only.
         if LoginItem.launchedAtLogin {
             DispatchQueue.main.async {
@@ -51,6 +60,7 @@ public struct WirelyApp: App {
     @StateObject private var route: RouteModel
     @StateObject private var l10n = L10n.shared
     @StateObject private var router = AppRouter()
+    @StateObject private var updates: UpdateChecker
 
     public init() {
         let s = TunnelStore()
@@ -61,8 +71,15 @@ public struct WirelyApp: App {
         c.exitCity = { [weak r] in MainActor.assumeIsolated { r?.exit?.city } }
         c.tunnelNamed = { [weak s] name in MainActor.assumeIsolated { s?.tunnels.first { $0.name == name } } }
         _route = StateObject(wrappedValue: r)
+        let current = AppVersion(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")
+            ?? AppVersion("0.0.0")!
+        let u = UpdateChecker(current: current)
+        let notifier = Notifier()
+        u.onNewRelease = { notifier.postUpdate($0, l10n: .shared) }
+        _updates = StateObject(wrappedValue: u)
         AppDelegate.store = s
         AppDelegate.controller = c
+        AppDelegate.updates = u
     }
 
     public var body: some Scene {
@@ -71,6 +88,7 @@ public struct WirelyApp: App {
                 .frame(minWidth: 820, minHeight: 560)
                 .environmentObject(l10n)
                 .environmentObject(router)
+                .environmentObject(updates)
                 .onAppear { controller.start() }
         }
         .commands {
@@ -86,6 +104,7 @@ public struct WirelyApp: App {
             MenuBarView(store: store, controller: controller, route: route)
                 .environmentObject(l10n)
                 .environmentObject(router)
+                .environmentObject(updates)
                 .onAppear { controller.start() }
         } label: {
             Image(nsImage: MenuBarIcon.image(connected: controller.status.state == .connected))

@@ -9,6 +9,7 @@ struct MenuBarView: View {
     @ObservedObject var route: RouteModel
     @EnvironmentObject private var l10n: L10n
     @EnvironmentObject private var router: AppRouter
+    @EnvironmentObject private var updates: UpdateChecker
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -30,6 +31,13 @@ struct MenuBarView: View {
             }
 
             divider
+            if let release = updates.bannerRelease {
+                action(l10n.format(.updateAvailableTitle, release.version.description)) {
+                    openWindow(id: "main")
+                    router.openSettings(.about)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            }
             action(l10n(.openWirely)) {
                 openWindow(id: "main")
                 NSApp.activate(ignoringOtherApps: true)

@@ -142,6 +142,11 @@ let stringsEN: [L: String] = [
     .updateCheckFailed: "Couldn't check for updates.",
     .checkAutomatically: "Check automatically",
     .releaseNotes: "Release notes",
+    .tagline: "A small WireGuard client for macOS.",
+    .github: "GitHub",
+    .currentVersion: "Version %@",
+    .connectOnLaunchHintNone: "Connects to the profile you used last.",
+    .creditsLines: "wireguard-go, MIT License\nManrope, SIL Open Font License 1.1\nNatural Earth land data, public domain\nServer location from ipwho.is and ipinfo.io",
 
     .errUnsupportedFile: "%@: unsupported file type",
     .errZipOpen: "%@: could not open the zip file",

@@ -48,6 +48,42 @@ enum PreviewRenderer {
         var menuBar = false
         var reconnect: ReconnectStatus?
         var settings: SettingsSection?
+        var update: ReleaseInfo?
+        var checked = false
+        var sheet = false
+    }
+
+    /// Never reached: previews must not touch the network.
+    private struct OfflineHTTP: HTTPFetching {
+        func get(_ url: URL, timeout: TimeInterval) async throws -> Data { throw URLError(.notConnectedToInternet) }
+    }
+
+    private static let sampleNotes = """
+    ## What's new
+
+    ### Settings
+    - A **Settings** page inside the main window.
+    - Reconnects automatically when the tunnel drops.
+    - Open at login and connect on launch.
+
+    ### Fixes
+    1. The map no longer flickers while connecting.
+    2. Profile names with spaces export correctly.
+
+    Run `wirely --help` for details.
+    """
+
+    private static func sampleRelease(_ now: Date) -> ReleaseInfo {
+        ReleaseInfo(version: AppVersion("1.2.0")!, tag: "v1.2.0", name: "Wirely 1.2.0", notes: sampleNotes,
+                    pageURL: URL(string: "https://github.com/luucas42/wirely/releases/tag/v1.2.0")!,
+                    dmgURL: nil, publishedAt: now.addingTimeInterval(-86_400 * 2))
+    }
+
+    private static func updateChecker(_ s: Scenario) -> UpdateChecker {
+        let u = UpdateChecker(http: OfflineHTTP(), current: AppVersion("1.1.0")!,
+                              defaults: UserDefaults(suiteName: "wirely-preview-\(UUID().uuidString)")!)
+        if let r = s.update { u.setPreview(.available(r)) } else if s.checked { u.setPreview(.upToDate) }
+        return u
     }
 
     private static func store(for s: Scenario) -> TunnelStore {
@@ -90,14 +126,20 @@ enum PreviewRenderer {
         let l10n = L10n(fixed: s.language)
         let router = AppRouter()
         if let section = s.settings { router.openSettings(section) }
+        let updates = updateChecker(s)
+        if s.sheet, let r = s.update {
+            return AnyView(ReleaseNotesSheet(release: r).environmentObject(l10n))
+        }
         if s.menuBar {
             return AnyView(MenuBarView(store: store, controller: controller, route: route)
                 .environmentObject(l10n)
-                .environmentObject(router))
+                .environmentObject(router)
+                .environmentObject(updates))
         }
         return AnyView(MainView(store: store, controller: controller, route: route)
             .environmentObject(l10n)
             .environmentObject(router)
+            .environmentObject(updates)
             .frame(width: 920, height: 600))
     }
 
@@ -120,6 +162,7 @@ enum PreviewRenderer {
                                         killSwitch: true)
         let blocked = TunnelStatus(state: .failed, tunnelName: name, message: "wireguard-go exited", killSwitch: true)
 
+        let release = sampleRelease(now)
         let scenarios: [Scenario] = [
             Scenario(label: "connected", status: connected, samples: true, latency: 46),
             Scenario(label: "connecting", status: connecting),
@@ -138,6 +181,9 @@ enum PreviewRenderer {
             Scenario(label: "settings-general", settings: .general),
             Scenario(label: "settings-service", settings: .service),
             Scenario(label: "settings-profiles-empty", profiles: [], selected: nil, exit: false, settings: .profiles),
+            Scenario(label: "settings-about", settings: .about, update: release),
+            Scenario(label: "settings-about-uptodate", settings: .about, checked: true),
+            Scenario(label: "update-banner", status: connected, samples: true, latency: 46, update: release),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
 
@@ -153,6 +199,8 @@ enum PreviewRenderer {
         var generalTR = Scenario(label: "settings-general-tr", settings: .general)
         generalTR.language = .tr
         render(generalTR, scheme: .dark, now: now, into: directory)
+
+        render(Scenario(label: "release-notes", update: release, sheet: true), scheme: .dark, now: now, into: directory)
 
         // Debug: land-mask sanity checks (whole world; Istanbul + Frankfurt framing).
         let l10n = L10n(fixed: .en)
