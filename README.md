@@ -31,11 +31,12 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 
 - **Standard WireGuard profiles** — drop in `.conf` files, several at once, or the `.zip` from the official app's *Export Tunnels to Zip*.
 - **Route map** — your city (from the Mac's time zone, offline) to the server's city, with distance, latency through the tunnel and live throughput.
-- **One tunnel at a time, one click** — profile chips across the top; switching profiles hands over cleanly.
+- **One tunnel at a time, one click** — profile chips across the top; connecting takes about a quarter of a second and switching profiles hands over cleanly.
 - **Honest status** — if the server stops answering (no handshake), the arc breaks and Wirely tells you the network may be blocking WireGuard.
 - **Notifications** for connected, dropped, no response and restored — never for a disconnect you clicked.
 - **Menu bar** panel with a toggle per profile.
 - **No leaks by default** — full-tunnel profiles route everything; if a profile has no IPv6 address, IPv6 is blocked instead of leaking around the tunnel.
+- **Kill switch** — if the tunnel drops, all internet traffic is blocked until you reconnect or click *Allow internet*, so nothing slips out over your normal connection. On by default; printers, AirDrop and other local devices keep working. [More below](#kill-switch).
 - **Survives network changes** — Wi-Fi switches and sleep/wake re-point the server route automatically.
 - **English and Türkçe**, switchable instantly in Settings. Light and dark mode.
 
@@ -61,6 +62,12 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 > [!IMPORTANT]
 > Use one profile per person and device. WireGuard identifies peers by key: if the same profile is connected on two Macs, they keep knocking each other offline.
 
+### Update
+
+1. Quit Wirely (menu bar icon → **Quit**), download the new DMG and drag **Wirely** to **Applications**, choosing **Replace**. Your profiles and settings are kept.
+2. Open it. macOS may ask you to approve it again, as in *First launch*.
+3. If the app says *A service update is required*, click **Update** and enter your Mac password. This restarts the service, so an active tunnel is disconnected; connect again afterwards.
+
 ### Uninstall
 
 **Wirely → Settings → Service → Uninstall service**, then move the app to the Trash. Your profiles are in `~/Library/Application Support/Wirely/Tunnels/` if you want to delete them too.
@@ -70,16 +77,29 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 ```
 ┌──────────────────────┐   Unix socket (JSON)   ┌───────────────────────────────┐
 │ Wirely.app (SwiftUI) │ ─────────────────────▶ │ wirely-helper (root daemon)   │
-│ profiles, map, UI    │ ◀───────────────────── │ ├─ wireguard-go  → utunN       │
+│ profiles, map, UI    │ ◀───────────────────── │ ├─ wireguard-go  → utunN      │
 └──────────────────────┘   status every second  │ ├─ ifconfig / route (routes)  │
-                                                │ └─ networksetup (DNS)         │
+                                                │ ├─ SystemConfiguration (DNS)  │
+                                                │ └─ pfctl (kill switch)        │
                                                 └───────────────────────────────┘
 ```
 
 - Creating a tunnel interface and changing routes and DNS needs root. Without an Apple Developer account there is no Network Extension, so Wirely installs a small **LaunchDaemon** once (with your password) and talks to it over `/var/run/wirely-helper.sock`.
-- The helper starts `wireguard-go`, configures it over its UAPI socket, then does what `wg-quick` does on macOS: interface address and MTU, `0.0.0.0/1` + `128.0.0.0/1` routes for full tunnels, a host route to the server through your real gateway, and the profile's DNS servers.
-- On disconnect everything is restored exactly — routes, DNS (per network service) and the IPv6 block. State is written to disk before each change, so if the helper crashes, the next start cleans up.
+- The helper starts `wireguard-go`, configures it over its UAPI socket, then does what `wg-quick` does on macOS: interface address and MTU, `0.0.0.0/1` + `128.0.0.0/1` routes for full tunnels, a host route to the server through your real gateway, and the profile's DNS servers (written through SystemConfiguration in one change, not one `networksetup` call per service).
+- On disconnect everything is restored exactly — routes, DNS (per network service) and the IPv6 block. State is written to disk before each change, so if the helper crashes, the next start cleans up (with the kill switch on, it keeps blocking instead).
 - The tunnel lives in the helper: quitting the app keeps you connected.
+
+### Kill switch
+
+<p align="center">
+  <img src="docs/images/blocked-dark.png" width="560" alt="Wirely after the tunnel dropped: Internet blocked, with Allow internet and Reconnect buttons">
+</p>
+
+Turn it on or off in **Settings → General** (on by default; changes apply the next time you connect).
+
+- Before `wireguard-go` starts, the helper loads rules into its own pf anchor, `com.apple/250.Wirely`. macOS's stock `/etc/pf.conf` already includes `com.apple/*`, so nothing is edited. The rules pass loopback, the tunnel, UDP to the WireGuard server and DHCP, plus private and link-local ranges with **Allow local network**; everything else is dropped.
+- If the tunnel drops (server gone, `wireguard-go` crashed, helper restarted), the rules stay and the app shows **Internet blocked**. **Reconnect** brings the tunnel back without opening a gap; **Allow internet** removes the block. Switching profiles keeps the block in place throughout.
+- **Disconnect** removes the rules. Wirely enables pf with its own reference (`pfctl -E`) and hands it back (`pfctl -X`), so pf stays on if something else turned it on.
 
 ### Security and privacy
 
@@ -92,7 +112,8 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 ### Limitations
 
 - Apple Silicon only; not notarized (see *First launch*).
-- One active tunnel at a time. No kill switch or on-demand rules yet.
+- One active tunnel at a time. No on-demand rules (auto-connect on untrusted Wi-Fi) yet.
+- While the kill switch is blocking, other VPNs such as Tailscale are blocked too. The block does not survive a restart: after a reboot the Mac comes up with normal internet.
 - Plain WireGuard only — obfuscated variants such as AmneziaWG are not supported.
 
 ## Build from source
@@ -148,5 +169,9 @@ Wirely is released under the [MIT License](LICENSE).
 4. Profil eklemek için `.conf` dosyasını pencereye sürükle ya da **İçe aktar**'a bas, ardından **Bağlan**.
 
 > Her kişi kendi profilini kullanmalı: aynı profil iki Mac'te aynı anda bağlanırsa ikisi de bağlantıdan düşer.
+
+**Kill switch:** Tünel düşerse Wirely, sen **Yeniden bağlan** ya da **İnternete izin ver** diyene kadar tüm interneti engeller; böylece trafik normal bağlantından sızmaz. Varsayılan olarak açık, **Ayarlar → Genel**'den kapatabilirsin. Yazıcı, AirDrop gibi yerel ağdaki cihazlar çalışmaya devam eder (*Yerel ağa izin ver*). Engel sürerken Tailscale gibi diğer VPN'ler de engellenir; Mac yeniden başlarsa engel kalkar.
+
+**Güncelleme:** Wirely'den çık (menü çubuğu simgesi → **Çık**), yeni DMG'yi indir ve Wirely'yi **Uygulamalar**'a sürükleyip **Değiştir**'i seç; profillerin ve ayarların kalır. Açınca macOS yine onay isteyebilir (2. adımdaki gibi). Uygulama *Servis güncellemesi gerekiyor* derse **Güncelle**'ye bas ve Mac parolanı gir; servis yeniden başladığı için açık tünel kapanır, sonra tekrar bağlan.
 
 Kaldırmak için: **Ayarlar → Servis → Servisi kaldır**, sonra uygulamayı Çöp Sepeti'ne at.

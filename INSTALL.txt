@@ -32,6 +32,16 @@ WIRELY INSTALLATION
    notification permission the first time one is shown. The app is English by
    default; choose Language -> Türkçe to switch instantly.
 
+7) Kill switch (Settings -> General, on by default): if the tunnel drops,
+   all internet is blocked until you click "Reconnect" or "Allow internet",
+   so nothing leaks over your normal connection. Local devices (printers,
+   AirDrop) keep working. A restart removes the block.
+
+UPDATING from an older version: quit Wirely (menu bar icon -> Quit), drag
+the new Wirely onto "Applications" and choose "Replace". If the app says a
+service update is required, click "Update" and enter your Mac password.
+Profiles and settings are kept.
+
 NOTE: Each person must use their own profile. If the same key is used on two
 Macs, both get disconnected.
 
@@ -72,6 +82,16 @@ TÜRKÇE
 
 5) Dil: Ayarlar → Genel → Dil → Türkçe (anında değişir). Bildirimler de aynı
    yerden açılıp kapatılır.
+
+6) Kill switch (Ayarlar → Genel, varsayılan açık): Tünel düşerse "Yeniden
+   bağlan" ya da "İnternete izin ver" diyene kadar tüm internet engellenir;
+   trafik normal bağlantınızdan sızmaz. Yazıcı, AirDrop gibi yerel cihazlar
+   çalışmaya devam eder. Mac yeniden başlarsa engel kalkar.
+
+GÜNCELLEME (eski sürümden): Wirely'den çıkın (menü çubuğu simgesi → Çık),
+yeni Wirely'yi "Applications" klasörüne sürükleyip "Değiştir"i seçin.
+Uygulama servis güncellemesi isterse "Güncelle"ye basıp Mac parolanızı
+girin. Profilleriniz ve ayarlarınız korunur.
 
 NOT: Her kişi kendi profilini kullanmalıdır. Aynı anahtarı iki Mac'te
 kullanırsanız ikisi de bağlantıdan düşer.
