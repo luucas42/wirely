@@ -205,9 +205,32 @@ enum PreviewRenderer {
         // Debug: land-mask sanity checks (whole world; Istanbul + Frankfurt framing).
         let l10n = L10n(fixed: .en)
         write(AnyView(WorldDebugView().frame(width: 920, height: 600)), label: "world", scheme: .dark, into: directory)
+        for scheme in [ColorScheme.dark, .light] {
+            let overlay = TraceOverlay(stations: sampleStations(), selected: 2, running: false, targetName: "example.com")
+            write(AnyView(RouteMapView(home: istanbul, exit: nil, exitIP: nil, phase: .connected, trace: overlay)
+                .equatable().environmentObject(l10n).frame(width: 840, height: 378).background(Theme.ground)),
+                  label: "route-map", scheme: scheme, into: directory)
+        }
         write(AnyView(RouteMapView(home: istanbul, exit: frankfurt(now), exitIP: exitIP, phase: .connected)
             .environmentObject(l10n).padding(40).frame(width: 920, height: 600).background(Theme.ground)),
               label: "europe", scheme: .dark, into: directory)
+    }
+
+    /// Sample route-mode stations for the map overlay (documentation addresses only).
+    private static func sampleStations() -> [TraceStation] {
+        func st(_ id: Int, _ city: String, _ cc: String?, _ lat: Double, _ lon: Double, _ kind: TraceStationKind,
+                _ hops: Int, _ addr: String?, _ ms: Double, jump: Double? = nil, _ leg: TraceLegKind) -> TraceStation {
+            TraceStation(id: id, city: city, countryCode: cc, point: GeoPoint(lat: lat, lon: lon), kind: kind,
+                         hopCount: hops, address: addr, rttMs: ms, jumpMs: jump, leg: leg)
+        }
+        return [
+            st(0, "Istanbul", "TR", 41.01, 28.98, .home, 3, nil, 11, .tunnel),
+            st(1, "Sofia", "BG", 42.70, 23.32, .hop, 1, "198.51.100.42", 24, .tunnel),
+            st(2, "Vienna", "AT", 48.21, 16.37, .hop, 1, "198.51.100.77", 38, jump: 14, .tunnel),
+            st(3, "Frankfurt", "DE", 50.11, 8.68, .vpn, 1, "203.0.113.10", 46, .tunnel),
+            st(4, "Amsterdam", "NL", 52.37, 4.90, .hop, 1, "192.0.2.81", 54, .open),
+            st(5, "London", "GB", 51.51, -0.13, .target, 1, "192.0.2.140", 61, .open),
+        ]
     }
 
     /// Whole-world dot map (row 0 = 90N, col 0 = 180W) to eyeball the land mask.

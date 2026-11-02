@@ -8,14 +8,14 @@ private final class DotCache {
     private var key = ""
     private(set) var path = Path()
 
-    fileprivate func path(for layout: MapLayout, key: String) -> Path {
+    fileprivate func path(frame: MapFrame, dy: CGFloat, key: String) -> Path {
         guard key != self.key else { return path }
         var p = Path()
         // 9 pt grid: dense enough for coastlines (Bosphorus, Adriatic) to read at window size.
-        for pt in layout.frame.landDots(spacing: 9) {
+        for pt in frame.landDots(spacing: 9) {
             p.addEllipse(in: CGRect(x: pt.x - 1.8, y: pt.y - 1.8, width: 3.6, height: 3.6))
         }
-        p = p.offsetBy(dx: 0, dy: -layout.dy)
+        p = p.offsetBy(dx: 0, dy: -dy)
         self.key = key
         path = p
         return p
@@ -32,31 +32,40 @@ struct RouteMapView: View, Equatable {
     let phase: RoutePhase
     /// Moves a lone You marker into the upper part of the map (the empty state's card sits in the middle).
     var lifted = false
+    /// Route mode: the trace stations replace the home/exit arc. Nil (or running without stations) keeps
+    /// the normal map, without the packet animation while a trace is set.
+    var trace: TraceOverlay?
 
     @EnvironmentObject private var l10n: L10n
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.previewMode) private var previewMode
     @State private var cache = DotCache()
     @State private var windowVisible = true
+    @State private var traceShown = true
     /// Read in `body` so a light/dark switch still redraws the canvases despite `.equatable()`.
     @Environment(\.colorScheme) private var colorScheme
 
     static func == (a: RouteMapView, b: RouteMapView) -> Bool {
         a.home == b.home && a.exit == b.exit && a.exitIP == b.exitIP && a.phase == b.phase && a.lifted == b.lifted
+            && a.trace == b.trace
     }
 
     var body: some View {
         let _ = colorScheme
         GeometryReader { geo in
-            let layout = MapLayout(size: geo.size, home: home?.point, exit: exit?.point, lift: lifted)
-            let dots = cache.path(for: layout, key: layout.key)
-            ZStack(alignment: .topLeading) {
-                Canvas { ctx, _ in ctx.fill(dots, with: .color(Theme.dot)) }
-                arcLayer(layout)
-                Canvas { ctx, _ in drawMarkers(ctx, layout) }
-                labels(layout)
+            if let t = trace, !t.stations.isEmpty {
+                routeBody(t, size: geo.size)
+            } else {
+                let layout = MapLayout(size: geo.size, home: home?.point, exit: exit?.point, lift: lifted)
+                let dots = cache.path(frame: layout.frame, dy: layout.dy, key: layout.key)
+                ZStack(alignment: .topLeading) {
+                    Canvas { ctx, _ in ctx.fill(dots, with: .color(Theme.dot)) }
+                    arcLayer(layout)
+                    Canvas { ctx, _ in drawMarkers(ctx, layout) }
+                    labels(layout)
+                }
+                .clipped()
             }
-            .clipped()
         }
         .background {
             // AppKit probe; ImageRenderer (preview renders) can't draw NSViews, and has no window anyway.
@@ -66,10 +75,30 @@ struct RouteMapView: View, Equatable {
         .accessibilityLabel(accessibilitySummary)
     }
 
+    // MARK: Route mode
+
+    private func routeBody(_ t: TraceOverlay, size: CGSize) -> some View {
+        let frame = MapFrame(points: t.stations.map(\.point), size: size, paddingFraction: 0.28, minSpanLon: 10)
+        let key = "trace|\(Int(size.width))x\(Int(size.height))|" + t.stations.map { "\($0.point.lat),\($0.point.lon)" }.joined(separator: ";")
+        let dots = cache.path(frame: frame, dy: 0, key: key)
+        return ZStack(alignment: .topLeading) {
+            Canvas { ctx, _ in ctx.fill(dots, with: .color(Theme.dot)) }
+            // One-shot fade-in when the stations change; static afterwards.
+            TraceOverlayLayer(trace: t, frame: frame, size: size)
+                .opacity(traceShown ? 1 : 0)
+        }
+        .clipped()
+        .onChange(of: t.stations) { _ in
+            guard !reduceMotion, !previewMode else { return }
+            traceShown = false
+            DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.35)) { traceShown = true } }
+        }
+    }
+
     // MARK: Arc
 
     private var animates: Bool {
-        (phase == .connected || phase == .connecting) && !reduceMotion && !previewMode
+        (phase == .connected || phase == .connecting) && !reduceMotion && !previewMode && trace == nil
     }
 
     @ViewBuilder
@@ -220,6 +249,9 @@ struct RouteMapView: View, Equatable {
     }
 
     private var accessibilitySummary: String {
+        if let t = trace, let first = t.stations.first, let last = t.stations.last, t.stations.count > 1 {
+            return "\(first.city) → \(last.city)"
+        }
         switch (home, exit) {
         case let (h?, e?): return "\(h.city) → \(e.city)"
         case let (h?, nil): return h.city
