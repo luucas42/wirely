@@ -38,11 +38,18 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 - **No leaks by default** — full-tunnel profiles route everything; if a profile has no IPv6 address, IPv6 is blocked instead of leaking around the tunnel.
 - **Kill switch** — if the tunnel drops, all internet traffic is blocked until you reconnect or click *Allow internet*, so nothing slips out over your normal connection. On by default; printers, AirDrop and other local devices keep working. [More below](#kill-switch).
 - **Survives network changes** — Wi-Fi switches and sleep/wake re-point the server route automatically.
+- **Reconnects by itself** — if the tunnel drops, Wirely retries in the background (right away after sleep or when the network comes back) until it's up again.
+- **Settings that look like the app** — profiles (edit, rename, export, delete), connection, language, notifications, open at login and connect on launch, all on one page inside the window (⌘,).
+- **Tells you about updates** — once a day it checks GitHub for a new release and shows what's new in the app.
 - **English and Türkçe**, switchable instantly in Settings. Light and dark mode.
 
 <p align="center">
   <img src="docs/images/connected-light.png" width="470" alt="Wirely in light mode">
   <img src="docs/images/menubar-dark.png" width="250" alt="Wirely menu bar panel">
+</p>
+
+<p align="center">
+  <img src="docs/images/settings-dark.png" width="620" alt="Wirely Settings page: a section list on the left (Profiles, Connection, General, Service, About) and the Connection settings with kill switch, local network and automatic reconnect switches">
 </p>
 
 ## Install
@@ -63,6 +70,8 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 > Use one profile per person and device. WireGuard identifies peers by key: if the same profile is connected on two Macs, they keep knocking each other offline.
 
 ### Update
+
+From 1.2 on, Wirely tells you when a new version is out (**Settings → About** shows what's new and a **Download** button).
 
 1. Quit Wirely (menu bar icon → **Quit**), download the new DMG and drag **Wirely** to **Applications**, choosing **Replace**. Your profiles and settings are kept.
 2. Open it. macOS may ask you to approve it again, as in *First launch*.
@@ -95,7 +104,7 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
   <img src="docs/images/blocked-dark.png" width="560" alt="Wirely after the tunnel dropped: Internet blocked, with Allow internet and Reconnect buttons">
 </p>
 
-Turn it on or off in **Settings → General** (on by default; changes apply the next time you connect).
+Turn it on or off in **Settings → Connection** (on by default; changes apply the next time you connect).
 
 - Before `wireguard-go` starts, the helper loads rules into its own pf anchor, `com.apple/250.Wirely`. macOS's stock `/etc/pf.conf` already includes `com.apple/*`, so nothing is edited. The rules pass loopback, the tunnel, UDP to the WireGuard server and DHCP, plus private and link-local ranges with **Allow local network**; everything else is dropped.
 - If the tunnel drops (server gone, `wireguard-go` crashed, helper restarted), the rules stay and the app shows **Internet blocked**. **Reconnect** brings the tunnel back without opening a gap; **Allow internet** removes the block. Switching profiles keeps the block in place throughout.
@@ -106,6 +115,7 @@ Turn it on or off in **Settings → General** (on by default; changes apply the 
 - The socket only accepts the user who installed the service (checked with `getpeereid`) and root.
 - Every system command is run with an argument list, never through a shell. `PreUp` / `PostUp` / `PreDown` / `PostDown` lines in profiles are **ignored**, not executed.
 - Profiles are stored with `0600` permissions. Private keys never appear in the helper log (`/Library/Logs/Wirely/helper.log`).
+- **Update check:** once a day Wirely asks GitHub's API for the latest release (`api.github.com/repos/luucas42/wirely/releases/latest`); nothing about you or your profiles is sent. Turn it off in **Settings → About → Check automatically**.
 - **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. Private addresses are never looked up.
 - DNS changes are applied only to real network services (Wi-Fi, Ethernet…), never to other VPN apps' services.
 
@@ -155,7 +165,7 @@ Wirely is released under the [MIT License](LICENSE).
 
 ## Türkçe
 
-**Wirely**, Mac için sade ve şık bir WireGuard istemcisi. `.conf` dosyanı içe aktarırsın, trafiğinin nereden çıktığını haritada görürsün, tek tıkla bağlanırsın. Arayüz varsayılan olarak İngilizce; **Ayarlar → Genel → Dil** bölümünden anında Türkçeye geçebilirsin.
+**Wirely**, Mac için sade ve şık bir WireGuard istemcisi. `.conf` dosyanı içe aktarırsın, trafiğinin nereden çıktığını haritada görürsün, tek tıkla bağlanırsın. Arayüz varsayılan olarak İngilizce; **Ayarlar → Genel → Dil** bölümünden anında Türkçeye geçebilirsin. Ayarlar artık pencerenin içinde (sağ üstteki dişli ya da ⌘,): profilleri düzenle, yeniden adlandır, dışa aktar, sil; girişte aç, açılınca bağlan.
 
 <p align="center">
   <img src="docs/images/connected-tr-dark.png" width="620" alt="Wirely Türkçe arayüz">
@@ -170,7 +180,11 @@ Wirely is released under the [MIT License](LICENSE).
 
 > Her kişi kendi profilini kullanmalı: aynı profil iki Mac'te aynı anda bağlanırsa ikisi de bağlantıdan düşer.
 
-**Kill switch:** Tünel düşerse Wirely, sen **Yeniden bağlan** ya da **İnternete izin ver** diyene kadar tüm interneti engeller; böylece trafik normal bağlantından sızmaz. Varsayılan olarak açık, **Ayarlar → Genel**'den kapatabilirsin. Yazıcı, AirDrop gibi yerel ağdaki cihazlar çalışmaya devam eder (*Yerel ağa izin ver*). Engel sürerken Tailscale gibi diğer VPN'ler de engellenir; Mac yeniden başlarsa engel kalkar.
+**Kill switch:** Tünel düşerse Wirely, sen **Yeniden bağlan** ya da **İnternete izin ver** diyene kadar tüm interneti engeller; böylece trafik normal bağlantından sızmaz. Varsayılan olarak açık, **Ayarlar → Bağlantı**'dan kapatabilirsin. Yazıcı, AirDrop gibi yerel ağdaki cihazlar çalışmaya devam eder (*Yerel ağa izin ver*). Engel sürerken Tailscale gibi diğer VPN'ler de engellenir; Mac yeniden başlarsa engel kalkar.
+
+**Otomatik yeniden bağlanma:** Tünel düşerse Wirely arka planda yeniden dener (uykudan uyanınca ya da internet geri gelince hemen). **Ayarlar → Bağlantı**'dan kapatılabilir.
+
+**Güncelleme bildirimi:** Wirely günde bir kez GitHub'da yeni sürüm olup olmadığına bakar; varsa haber verir ve **Ayarlar → Hakkında**'da yenilikleri gösterir.
 
 **Güncelleme:** Wirely'den çık (menü çubuğu simgesi → **Çık**), yeni DMG'yi indir ve Wirely'yi **Uygulamalar**'a sürükleyip **Değiştir**'i seç; profillerin ve ayarların kalır. Açınca macOS yine onay isteyebilir (2. adımdaki gibi). Uygulama *Servis güncellemesi gerekiyor* derse **Güncelle**'ye bas ve Mac parolanı gir; servis yeniden başladığı için açık tünel kapanır, sonra tekrar bağlan.
 

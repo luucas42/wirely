@@ -32,10 +32,15 @@ WIRELY INSTALLATION
    notification permission the first time one is shown. The app is English by
    default; choose Language -> Türkçe to switch instantly.
 
-7) Kill switch (Settings -> General, on by default): if the tunnel drops,
+7) Kill switch (Settings -> Connection, on by default): if the tunnel drops,
    all internet is blocked until you click "Reconnect" or "Allow internet",
    so nothing leaks over your normal connection. Local devices (printers,
    AirDrop) keep working. A restart removes the block.
+
+8) Settings are inside the main window (gear icon top right, or Cmd+,).
+   Connection: reconnect automatically if the tunnel drops (on by default).
+   General: open at login, connect when Wirely opens.
+   About: Wirely checks GitHub once a day and tells you about new versions.
 
 UPDATING from an older version: quit Wirely (menu bar icon -> Quit), drag
 the new Wirely onto "Applications" and choose "Replace". If the app says a
@@ -45,8 +50,8 @@ Profiles and settings are kept.
 NOTE: Each person must use their own profile. If the same key is used on two
 Macs, both get disconnected.
 
-Uninstall: Wirely -> Settings -> "Remove service", then move the app to the
-Trash.
+Uninstall: Wirely -> Settings -> Service -> "Uninstall service", then move
+the app to the Trash.
 
 Credits: wireguard-go (MIT), Manrope font (SIL OFL 1.1), Natural Earth land
 data (public domain).
@@ -83,10 +88,15 @@ TÜRKÇE
 5) Dil: Ayarlar → Genel → Dil → Türkçe (anında değişir). Bildirimler de aynı
    yerden açılıp kapatılır.
 
-6) Kill switch (Ayarlar → Genel, varsayılan açık): Tünel düşerse "Yeniden
+6) Kill switch (Ayarlar → Bağlantı, varsayılan açık): Tünel düşerse "Yeniden
    bağlan" ya da "İnternete izin ver" diyene kadar tüm internet engellenir;
    trafik normal bağlantınızdan sızmaz. Yazıcı, AirDrop gibi yerel cihazlar
    çalışmaya devam eder. Mac yeniden başlarsa engel kalkar.
+
+7) Ayarlar ana pencerenin içinde (sağ üstteki dişli ya da Cmd+,).
+   Bağlantı: tünel düşerse otomatik yeniden bağlan (varsayılan açık).
+   Genel: girişte aç, Wirely açılınca bağlan.
+   Hakkında: Wirely günde bir kez GitHub'a bakar, yeni sürümü haber verir.
 
 GÜNCELLEME (eski sürümden): Wirely'den çıkın (menü çubuğu simgesi → Çık),
 yeni Wirely'yi "Applications" klasörüne sürükleyip "Değiştir"i seçin.
@@ -96,5 +106,5 @@ girin. Profilleriniz ve ayarlarınız korunur.
 NOT: Her kişi kendi profilini kullanmalıdır. Aynı anahtarı iki Mac'te
 kullanırsanız ikisi de bağlantıdan düşer.
 
-Kaldırma: Wirely → Ayarlar → "Servisi Kaldır", sonra uygulamayı Çöp
-Sepeti'ne atın.
+Kaldırma: Wirely → Ayarlar → Servis → "Servisi kaldır", sonra uygulamayı
+Çöp Sepeti'ne atın.
