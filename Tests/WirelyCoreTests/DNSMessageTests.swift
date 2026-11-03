@@ -141,3 +141,14 @@ private func response(answers: [[UInt8]], type: UInt16 = 1) -> [UInt8] {
     #expect(DNSMessage.emptyResponse(to: query("example.com", flags: 0x8100)) == nil)
     #expect(DNSMessage.emptyResponse(to: Array(query("example.com").prefix(18))) == nil)
 }
+
+@Test func queryBuilderRoundTrips() {
+    let q = DNSMessage.query(id: 0xBEEF, name: "WWW.example.com.", type: 28)
+    #expect(q == header(id: 0xBEEF, flags: 0x0100) + name("WWW.example.com") + [0, 28, 0, 1])
+    let parsed = DNSMessage.parseQuery(q)
+    #expect(parsed?.id == 0xBEEF)
+    #expect(parsed?.name == "www.example.com")
+    #expect(parsed?.type == 28)
+    #expect(DNSMessage.query(id: 1, name: "a..b", type: 1).isEmpty)
+    #expect(DNSMessage.query(id: 1, name: String(repeating: "a", count: 64) + ".com", type: 1).isEmpty)
+}

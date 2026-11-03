@@ -97,4 +97,22 @@ public enum DNSMessage {
     public static func emptyResponse(to query: [UInt8]) -> [UInt8]? { reply(to: query, rcode: 0) }
 
     public static func servfail(to query: [UInt8]) -> [UInt8]? { reply(to: query, rcode: 2) }
+
+    /// A recursive query (RD = 1) for one name, class IN. Empty if the name has an empty or over-long label.
+    public static func query(id: UInt16, name: String, type: UInt16) -> [UInt8] {
+        var out: [UInt8] = [UInt8(id >> 8), UInt8(id & 0xFF), 0x01, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]
+        var host = name
+        while host.hasSuffix(".") { host.removeLast() }
+        if !host.isEmpty {
+            for label in host.split(separator: ".", omittingEmptySubsequences: false) {
+                let bytes = Array(label.utf8)
+                guard !bytes.isEmpty, bytes.count <= 63 else { return [] }
+                out.append(UInt8(bytes.count))
+                out += bytes
+            }
+        }
+        out.append(0)
+        out += [UInt8(type >> 8), UInt8(type & 0xFF), 0, 1]
+        return out
+    }
 }
