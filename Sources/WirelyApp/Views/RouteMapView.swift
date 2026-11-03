@@ -197,8 +197,9 @@ struct RouteMapView: View, Equatable {
         var homeLabel: Label?
         if let h = l.homePt, let home {
             let w = Self.width(title: home.city, subtitle: l10n(.you))
-            // To the right of You unless that overflows (or the exit lies to the right of it and a left label is clearer).
-            let overflow = h.x + 14 + w > l.size.width - 4
+            // On the side away from the exit; to the right when that doesn't fit or there is no exit.
+            let awayLeft = (l.exitPt.map { $0.x > h.x } ?? false) && h.x - 14 - w >= 4
+            let overflow = awayLeft || h.x + 14 + w > l.size.width - 4
             let x = overflow ? h.x - 14 - w : h.x + 14
             homeLabel = Label(title: home.city, subtitle: l10n(.you), color: Theme.ink,
                               rect: CGRect(x: x, y: h.y - 12, width: w, height: 38), trailing: overflow)
@@ -209,9 +210,13 @@ struct RouteMapView: View, Equatable {
             // On the side away from You.
             var left = (l.homePt.map { $0.x > e.x } ?? false)
             if !left, e.x + 22 + w > l.size.width - 4 { left = true }
-            if left, e.x - 22 - w < 4 { left = false }
-            var x = left ? e.x - 22 - w : e.x + 22
-            var y = e.y - 12
+            // The away side is too narrow (map beside the split panel): above the marker keeps the arc clear.
+            var above = false
+            if left, e.x - 22 - w < 4 {
+                if e.y - 52 >= 2 { above = true } else { left = false }
+            }
+            var x = above ? e.x - w / 2 : (left ? e.x - 22 - w : e.x + 22)
+            var y = above ? e.y - 52 : e.y - 12
             if let hl = homeLabel, hl.rect.insetBy(dx: -4, dy: -4).intersects(CGRect(x: x, y: y, width: w, height: 38)) {
                 y = e.y + 14      // crowded: drop the exit label below its marker
                 if hl.rect.insetBy(dx: -4, dy: -4).intersects(CGRect(x: x, y: y, width: w, height: 38)) {
@@ -221,7 +226,7 @@ struct RouteMapView: View, Equatable {
             x = max(4, min(x, l.size.width - w - 4))
             y = max(2, min(y, l.size.height - 40))
             out.append(Label(title: exit.city, subtitle: sub, color: phase == .connecting ? Theme.ink : exitColor,
-                             rect: CGRect(x: x, y: y, width: w, height: 38), trailing: left))
+                             rect: CGRect(x: x, y: y, width: w, height: 38), trailing: left && !above))
         }
         if var hl = homeLabel {
             hl.rect.origin.y = max(2, min(hl.rect.origin.y, l.size.height - 40))

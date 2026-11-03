@@ -15,7 +15,12 @@ enum PreviewRenderer {
         return args[i + 1]
     }
 
-    private static let configText = """
+    nonisolated private static let defaultAllowed = "0.0.0.0/0, ::/0"
+    /// Split previews: a server that only accepts the 10.8 and 172.16 networks, so 10.2.2.4 is uncovered.
+    nonisolated private static let splitAllowed = "10.8.0.0/16, 172.16.0.0/16"
+
+    private static func configText(allowed: String) -> String {
+        """
     [Interface]
     PrivateKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     Address = 10.8.0.2/32, fd00::2/128
@@ -25,9 +30,10 @@ enum PreviewRenderer {
     [Peer]
     PublicKey = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
     Endpoint = vpn.example.com:51820
-    AllowedIPs = 0.0.0.0/0, ::/0
+    AllowedIPs = \(allowed)
     PersistentKeepalive = 25
     """
+    }
 
     private static let istanbul = HomeLocation(city: "Istanbul", point: GeoPoint(lat: 41.01, lon: 28.98))
     private static let exitIP = "203.0.113.10"
@@ -59,6 +65,11 @@ enum PreviewRenderer {
         var devices: DevicesScenario?
         var lanBlocked: Bool?
         var size = CGSize(width: 920, height: 600)
+        var allowedIPs = PreviewRenderer.defaultAllowed
+        /// Split-tunnel settings of "home" (rules in display order) and whether the panel is open.
+        var splitMode = SplitMode.all
+        var splitRules: [String] = []
+        var splitPanel = false
     }
 
     /// Route-mode state for the full window.
@@ -168,7 +179,7 @@ enum PreviewRenderer {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("wirely-preview-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         for name in s.profiles {
-            try? configText.write(to: dir.appendingPathComponent(name + ".conf"), atomically: true, encoding: .utf8)
+            try? configText(allowed: s.allowedIPs).write(to: dir.appendingPathComponent(name + ".conf"), atomically: true, encoding: .utf8)
         }
         if let b = s.broken {
             try? "[Interface]".write(to: dir.appendingPathComponent(b + ".conf"), atomically: true, encoding: .utf8)
@@ -177,7 +188,13 @@ enum PreviewRenderer {
     }
 
     private static func controller(_ s: Scenario) -> ConnectionController {
-        let c = ConnectionController()
+        // A scratch store so previews never read the real split.json.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wirely-preview-split-\(UUID().uuidString)/split.json")
+        let splitStore = SplitStore(url: url)
+        for rule in s.splitRules.reversed() { _ = splitStore.add(rule, for: "home") }
+        splitStore.setMode(s.splitMode, for: "home")
+        let c = ConnectionController(splitStore: splitStore)
         c.helperState = s.helper
         c.status = s.status
         c.reconnectStatus = s.reconnect
@@ -218,6 +235,7 @@ enum PreviewRenderer {
         let l10n = L10n(fixed: s.language)
         let router = AppRouter(defaults: nil)
         router.mode = s.mode
+        router.splitPanel = s.splitPanel
         let scanner = DeviceScanner(env: NullLANEnvironment(), notify: { _, _ in }, defaults: UserDefaults(suiteName: "wirely-preview-\(UUID().uuidString)")!)
         if let d = s.devices {
             scanner.setPreview(network: d.network, devices: d.devices, phase: d.phase, selected: d.selected,
@@ -322,6 +340,40 @@ enum PreviewRenderer {
                      route: longNames, size: CGSize(width: 1200, height: 760)),
             Scenario(label: "menubar", status: connected, samples: true, latency: 46, menuBar: true),
         ]
+        // Split tunnel: "home" connected in split mode through a server that accepts 10.8/16 and 172.16/16 only.
+        let splitRules = ["intranet.example.com", "10.2.2.4", "10.8.0.0/16", "example.net"]
+        var splitConnected = connected
+        splitConnected.split = ["intranet.example.com": SplitRuleStatus(routed: 2, rejected: 0),
+                                "example.net": SplitRuleStatus(routed: 0, rejected: 0)]
+        splitConnected.splitDNS = true
+        var splitEmpty = connected
+        splitEmpty.split = [:]
+        splitEmpty.splitDNS = true
+        var splitDNSOff = splitConnected
+        splitDNSOff.splitDNS = false
+        var splitBlocked = blocked
+        splitBlocked.split = [:]
+        func splitScenario(_ label: String, status: TunnelStatus, mode: SplitMode = .selected, rules: [String] = splitRules,
+                           allowed: String = splitAllowed, panel: Bool = true,
+                           size: CGSize = CGSize(width: 920, height: 600)) -> Scenario {
+            Scenario(label: label, status: status, samples: status.state == .connected, latency: 46, size: size,
+                     allowedIPs: allowed, splitMode: mode, splitRules: rules, splitPanel: panel)
+        }
+        let minSize = CGSize(width: 820, height: 560)
+        let splitScenarios: [Scenario] = [
+            splitScenario("split-panel", status: splitConnected),
+            splitScenario("split-panel-empty", status: splitEmpty, rules: [], allowed: defaultAllowed),
+            splitScenario("split-panel-all", status: connected, mode: .all),
+            splitScenario("split-panel-disconnected", status: .disconnected),
+            splitScenario("split-panel-dns-off", status: splitDNSOff),
+            splitScenario("split-panel-min", status: splitConnected, size: minSize),
+            splitScenario("split-panel-disconnected-min", status: .disconnected, size: minSize),
+            splitScenario("blocked-split", status: splitBlocked, panel: false),
+            splitScenario("blocked-split-panel", status: splitBlocked),
+            splitScenario("blocked-split-panel-min", status: splitBlocked, size: minSize),
+            splitScenario("connected-min", status: connected, rules: [], panel: false, size: minSize),
+            splitScenario("split-pill", status: splitConnected, panel: false),
+        ]
         let sampleList = sampleDevices(now: now)
         let hue = sampleList.first { $0.name == "Hue Bridge" }?.mac
         let fresh = sampleList.first { $0.isNew }?.mac
@@ -352,7 +404,7 @@ enum PreviewRenderer {
         ]
 
         try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
-        for s in scenarios + deviceScenarios {
+        for s in scenarios + deviceScenarios + splitScenarios {
             for scheme in [ColorScheme.light, .dark] {
                 render(s, scheme: scheme, now: now, into: directory)
             }
@@ -360,6 +412,10 @@ enum PreviewRenderer {
         var tr = Scenario(label: "connected-tr", status: connected, samples: true, latency: 46)
         tr.language = .tr
         render(tr, scheme: .dark, now: now, into: directory)
+        var splitTR = splitScenarios[0]
+        splitTR.label = "split-panel-tr"
+        splitTR.language = .tr
+        render(splitTR, scheme: .dark, now: now, into: directory)
         var devicesTR = deviceScenarios[0]
         devicesTR.label = "devices-tr"
         devicesTR.language = .tr

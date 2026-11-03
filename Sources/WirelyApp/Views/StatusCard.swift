@@ -7,8 +7,11 @@ struct StatusCard: View {
     @ObservedObject var controller: ConnectionController
     @ObservedObject var route: RouteModel
     let onEdit: () -> Void
+    /// The split panel is open beside the card: no stats, buttons rearranged for the narrower width.
+    var compact = false
 
     @EnvironmentObject private var l10n: L10n
+    @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var trace: TraceModel
     @Environment(\.previewMode) private var previewMode
     @State private var showDetails = false
@@ -35,14 +38,20 @@ struct StatusCard: View {
         // Blocked by the kill switch: every stat is "—", so give the space to the explanation and actions.
         let reconnecting = controller.reconnectStatus?.name == tunnel.name
         let blocked = status.isBlockedByKillSwitch || reconnecting
-        return HStack(spacing: 20) {
-            titleBlock(phase: phase, status: status, now: now)
-                .frame(width: blocked ? nil : 270, alignment: .leading)
-                .frame(maxWidth: blocked ? .infinity : nil, alignment: .leading)
-            if !blocked { statsBlock(stats) }
-            trailing(phase: phase, status: status, now: now)
+        return Group {
+            if compact {
+                compactBody(phase: phase, status: status, now: now, blocked: blocked)
+            } else {
+                HStack(spacing: 20) {
+                    titleBlock(phase: phase, status: status, now: now, pill: true)
+                        .frame(width: blocked ? nil : 270, alignment: .leading)
+                        .frame(maxWidth: blocked ? .infinity : nil, alignment: .leading)
+                    if !blocked { statsBlock(stats) }
+                    trailing(phase: phase, status: status, now: now)
+                }
+            }
         }
-        .padding(.horizontal, 28)
+        .padding(.horizontal, compact ? 20 : 28)
         .frame(maxWidth: .infinity)
         .frame(height: 136)
         .background(RoundedRectangle(cornerRadius: 16).fill(Theme.card))
@@ -64,7 +73,41 @@ struct StatusCard: View {
 
     private var isReconnecting: Bool { controller.reconnectStatus?.name == tunnel.name }
 
-    private func titleBlock(phase: RoutePhase, status: TunnelStatus, now: Date) -> some View {
+    /// The split pill needs a profile that can connect and a running service.
+    private var showsSplitPill: Bool { tunnel.config != nil && controller.helperState == .ready }
+
+    private var splitPill: some View {
+        SplitPill(tunnel: tunnel, store: controller.splitStore, open: router.splitPanel) {
+            router.splitPanel.toggle()
+        }
+    }
+
+    /// Narrow layout beside the split panel: title and primary button, then the pill and the small buttons.
+    @ViewBuilder
+    private func compactBody(phase: RoutePhase, status: TunnelStatus, now: Date, blocked: Bool) -> some View {
+        if blocked {
+            VStack(alignment: .leading, spacing: 10) {
+                titleBlock(phase: phase, status: status, now: now, pill: false)
+                HStack { Spacer(minLength: 0); primaryButton(phase: phase) }
+            }
+        } else {
+            VStack(spacing: 8) {
+                HStack(spacing: 12) {
+                    titleBlock(phase: phase, status: status, now: now, pill: false)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    primaryButton(phase: phase)
+                }
+                HStack(spacing: 6) {
+                    if showsSplitPill { splitPill }
+                    Spacer(minLength: 0)
+                    routeButton(phase: phase)
+                    if let config = tunnel.config { infoButton(config, status: status, now: now) }
+                }
+            }
+        }
+    }
+
+    private func titleBlock(phase: RoutePhase, status: TunnelStatus, now: Date, pill: Bool) -> some View {
         let (sub, isAlert) = isReconnecting ? (reconnectLine(now: now), false) : subline(phase: phase, status: status, now: now)
         return VStack(alignment: .leading, spacing: 4) {
             Text(title(for: phase))
@@ -80,6 +123,7 @@ struct StatusCard: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .minimumScaleFactor(0.85)
+            if pill, showsSplitPill { splitPill.padding(.top, 4) }
         }
     }
 
@@ -99,7 +143,10 @@ struct StatusCard: View {
             return (join(l10n.format(.connectedFor, elapsed)), false)
         case .noResponse: return (l10n(.noResponseHint), true)
         case .failed:
-            if status.isBlockedByKillSwitch { return (l10n(.internetBlockedHint), true) }
+            if status.isBlockedByKillSwitch {
+                let splitting = controller.splitStore.settings(for: tunnel.name).mode == .selected
+                return (l10n(splitting ? .splitBlockedHint : .internetBlockedHint), true)
+            }
             return (status.message ?? controller.lastError ?? l10n(.genericError), true)
         case .invalid: return (configError, true)
         case .connecting, .idle: return (join(tunnel.name), false)
@@ -216,10 +263,10 @@ struct StatusCard: View {
             }
         } else if phase == .connected || phase == .noResponse {
             PillButton(kind: .outline, action: { Task { await controller.disconnect() } }) {
-                Text(l10n(.disconnect))
+                Text(l10n(.disconnect)).lineLimit(1).fixedSize()
             }
         } else {
-            PillButton(action: { Task { await controller.connect(tunnel) } }) { Text(l10n(.connect)) }
+            PillButton(action: { Task { await controller.connect(tunnel) } }) { Text(l10n(.connect)).lineLimit(1).fixedSize() }
                 .disabled(!ready)
         }
     }

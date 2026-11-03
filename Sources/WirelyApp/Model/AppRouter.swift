@@ -42,8 +42,14 @@ final class AppRouter: ObservableObject {
     @Published var section: SettingsSection = .profiles
     /// Saved in `defaults` when the router was created with one (previews pass nil).
     @Published var mode: AppMode {
-        didSet { if mode != oldValue { defaults?.set(mode.rawValue, forKey: Self.modeKey) } }
+        didSet {
+            guard mode != oldValue else { return }
+            defaults?.set(mode.rawValue, forKey: Self.modeKey)
+            if mode == .devices { splitPanel = false }
+        }
     }
+    /// The split-tunnel side panel on the Tunnel page. Not persisted; exclusive with route mode.
+    @Published var splitPanel = false
 
     private let defaults: UserDefaults?
 
@@ -54,6 +60,7 @@ final class AppRouter: ObservableObject {
 
     func openSettings(_ section: SettingsSection? = nil) {
         if let section { self.section = section }
+        splitPanel = false
         showingSettings = true
     }
 

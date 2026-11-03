@@ -91,6 +91,11 @@ enum L: String, CaseIterable {
     case splitSubDomainCount, splitSubDomainLooking, splitSubDomain, splitSingleAddress
     case splitNetworkCount, splitNetwork, splitFromProfile
     case splitUncovered, splitRejected, splitDNSOff, splitSummaryAll, splitSummaryN
+    // Split tunnel panel
+    case splitTitle, splitProfileLine, splitModeAll, splitModeSelected, splitHintSelected, splitHintAll
+    case splitPlaceholder, splitAddAction, splitRemove, splitEmpty
+    case splitAppliedNow, splitAppliedOnConnect, splitModeReconnects, splitBrowserNote
+    case splitBannerDNS, splitBlockedHint
 }
 
 final class L10n: ObservableObject {

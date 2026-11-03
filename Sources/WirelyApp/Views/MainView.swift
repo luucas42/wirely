@@ -110,22 +110,25 @@ struct MainView: View {
         .onChange(of: controller.status.state) { _ in ensureSelection(preferConnected: true) }
         .onChange(of: route.selectedName) { _ in if trace.active { trace.close() } }
         .onChange(of: router.showingSettings) { showing in if showing, trace.active { trace.close() } }
-        .onChange(of: trace.active) { active in
-            if active { installEscMonitor() } else { removeEscMonitor() }
+        .onChange(of: trace.active || router.splitPanel) { open in
+            if open { installEscMonitor() } else { removeEscMonitor() }
         }
+        .onChange(of: trace.active) { active in if active { router.splitPanel = false } }
+        .onChange(of: router.splitPanel) { open in if open, trace.active { trace.close() } }
         .onDisappear(perform: removeEscMonitor)
     }
 
     // MARK: Esc
 
-    /// Esc leaves route mode. Same key-monitor approach as the Settings page; only one of the two is ever active
-    /// because opening Settings closes route mode. A sheet or dialog gets the key first.
+    /// Esc leaves route mode or closes the split panel (they are never open together). Same key-monitor approach as
+    /// the Settings page; only one of the two is ever active because opening Settings closes both.
+    /// A sheet or dialog gets the key first.
     private func installEscMonitor() {
         guard !previewMode, escMonitor == nil else { return }
-        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [trace] event in
-            guard event.keyCode == 53, trace.active,
+        escMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [trace, router] event in
+            guard event.keyCode == 53, trace.active || router.splitPanel,
                   event.window?.attachedSheet == nil, event.window?.sheetParent == nil else { return event }
-            trace.close()
+            if trace.active { trace.close() } else { router.splitPanel = false }
             return nil
         }
     }
@@ -180,6 +183,28 @@ struct MainView: View {
 
     @ViewBuilder
     private var tunnelBody: some View {
+        if router.splitPanel, !trace.active, let t = selected {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(spacing: 0) {
+                    mapArea
+                        .padding(.horizontal, 8)
+                        .frame(maxHeight: .infinity)
+                    StatusCard(tunnel: t, controller: controller, route: route, onEdit: { editing = t }, compact: true)
+                        .padding(.top, 4)
+                }
+                SplitPanel(tunnel: t, controller: controller, store: controller.splitStore,
+                           onClose: { router.splitPanel = false })
+                    .frame(width: 380)
+            }
+            .padding(.horizontal, 24)
+            .padding(.bottom, 24)
+        } else {
+            defaultTunnelBody
+        }
+    }
+
+    @ViewBuilder
+    private var defaultTunnelBody: some View {
         mapArea
             .padding(.horizontal, 40)
             .frame(maxHeight: .infinity)

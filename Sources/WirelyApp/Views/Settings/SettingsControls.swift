@@ -24,6 +24,8 @@ struct PillToggleStyle: ToggleStyle {
 struct SegmentedPills<T: Hashable>: View {
     let options: [(value: T, label: String)]
     @Binding var selection: T
+    /// Stretch to the full width with equal-width segments.
+    var fill = false
     @Environment(\.previewMode) private var previewMode
 
     var body: some View {
@@ -50,7 +52,8 @@ struct SegmentedPills<T: Hashable>: View {
         Text(label)
             .font(.mr(13, 700))
             .foregroundStyle(selected ? Theme.onCobalt : Theme.chipIdleText)
-            .padding(.horizontal, 14).padding(.vertical, 6)
+            .padding(.horizontal, 14).padding(.vertical, fill ? 7 : 6)
+            .frame(maxWidth: fill ? .infinity : nil)
             .background { if selected { Capsule().fill(Theme.cobaltFill) } }
             .contentShape(Capsule())
     }
