@@ -69,7 +69,10 @@ public struct WirelyApp: App {
 
     public init() {
         let s = TunnelStore()
-        let c = ConnectionController()
+        let split = SplitStore()
+        s.onRenamed = { [weak split] old, new in MainActor.assumeIsolated { split?.renameProfile(old, to: new) } }
+        s.onDeleted = { [weak split] name in MainActor.assumeIsolated { split?.deleteProfile(name) } }
+        let c = ConnectionController(splitStore: split)
         _store = StateObject(wrappedValue: s)
         _controller = StateObject(wrappedValue: c)
         let r = RouteModel(store: s, controller: c)

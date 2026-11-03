@@ -30,6 +30,11 @@ final class ConnectionController: ObservableObject {
     /// Non-nil while the planner is waiting to retry or retrying a dropped tunnel.
     @Published var reconnectStatus: ReconnectStatus?
 
+    /// Split-tunnel settings per profile; the views observe this store directly.
+    let splitStore: SplitStore
+    /// Replaces the helper socket (tests).
+    var sendOverride: ((HelperRequest) async -> Result<HelperResponse, HelperClientError>)?
+
     private let queue = DispatchQueue(label: "wirely.helper-client")
     private let client = HelperClient()
     /// Traces get their own queue and client so a slow one never delays status polls.
@@ -49,6 +54,10 @@ final class ConnectionController: ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private var pathMonitor: NWPathMonitor?
     private var lastSample: (name: String?, connectedAt: Date?, date: Date, rx: UInt64, tx: UInt64)?
+
+    init(splitStore: SplitStore? = nil) {
+        self.splitStore = splitStore ?? SplitStore()
+    }
 
     func start() {
         guard timer == nil else { return }
@@ -133,6 +142,7 @@ final class ConnectionController: ObservableObject {
     // MARK: Helper calls
 
     private func call(_ request: HelperRequest) async -> Result<HelperResponse, HelperClientError> {
+        if let sendOverride { return await sendOverride(request) }
         let client = self.client
         return await withCheckedContinuation { cont in
             queue.async {
@@ -262,8 +272,10 @@ final class ConnectionController: ObservableObject {
         defer { busy = false }
         // Replacing a live tunnel tears the old one down: not a drop.
         if status.state == .connected, status.tunnelName != tunnel.name { detector.userRequestedDisconnect() }
+        let split = splitStore.settings(for: tunnel.name)
         let request = HelperRequest(command: .up, tunnelName: tunnel.name, config: tunnel.text,
-                                    killSwitch: KillSwitchSettings.enabled, allowLAN: KillSwitchSettings.allowLAN)
+                                    killSwitch: KillSwitchSettings.enabled, allowLAN: KillSwitchSettings.allowLAN,
+                                    split: split.mode == .selected ? split.rules.map(\.text) : nil)
         switch await call(request) {
         case .success(let r):
             if !r.ok, !auto { lastError = Self.describe(r, fallback: .connectFailed) }
@@ -338,6 +350,45 @@ extension ConnectionController {
 
     func toggle(_ tunnel: StoredTunnel) async {
         if isOn(tunnel) { await disconnect() } else { await connect(tunnel) }
+    }
+}
+
+extension ConnectionController {
+    /// Addresses learned per domain rule, as the helper reports them.
+    var splitCounts: [String: SplitRuleStatus] { status.split ?? [:] }
+    /// The local DNS proxy runs (false = site rules are off); nil outside split mode.
+    var splitDNSActive: Bool? { status.splitDNS }
+
+    /// Saves the mode; a connected `tunnel` reconnects to apply it.
+    func setSplitMode(_ mode: SplitMode, for tunnel: StoredTunnel) async {
+        guard splitStore.settings(for: tunnel.name).mode != mode else { return }
+        splitStore.setMode(mode, for: tunnel.name)
+        if isOn(tunnel) { await connect(tunnel) }
+    }
+
+    func addSplitRule(_ input: String, for tunnel: StoredTunnel) async -> SplitAddError? {
+        if let error = splitStore.add(input, for: tunnel.name) { return error }
+        await pushSplitRules(for: tunnel)
+        return nil
+    }
+
+    func removeSplitRule(_ rule: SplitRule, for tunnel: StoredTunnel) async {
+        splitStore.remove(rule, for: tunnel.name)
+        await pushSplitRules(for: tunnel)
+    }
+
+    /// Sends the saved list to the running split tunnel; the saved rules stay even if that fails.
+    private func pushSplitRules(for tunnel: StoredTunnel) async {
+        guard state(for: tunnel) == .connected, status.split != nil else { return }
+        let rules = splitStore.settings(for: tunnel.name).rules.map(\.text)
+        switch await call(HelperRequest(command: .split, split: rules)) {
+        case .success(let r):
+            if !r.ok { lastError = Self.describe(r, fallback: .genericError) }
+            if let s = r.status { apply(s) }
+        case .failure(let e):
+            if e == .notRunning { helperState = .checking }
+            lastError = L10n.shared.describe(e)
+        }
     }
 }
 

@@ -28,6 +28,9 @@ enum StoreError: Error, LocalizedError {
 final class TunnelStore: ObservableObject {
     @Published private(set) var tunnels: [StoredTunnel] = []
     let directory: URL
+    /// Called after a profile was renamed (old, new) or deleted; the app root points these at `SplitStore`.
+    var onRenamed: (String, String) -> Void = { _, _ in }
+    var onDeleted: (String) -> Void = { _ in }
 
     nonisolated static var defaultDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
@@ -96,6 +99,7 @@ final class TunnelStore: ObservableObject {
         var renamed = old
         renamed.name = target
         tunnels = Self.sorted(tunnels.filter { $0.name != name } + [renamed])
+        onRenamed(name, target)
     }
 
     /// Writes a profile's text to `url` (atomic, owner-only) for backup or sharing.
@@ -112,6 +116,7 @@ final class TunnelStore: ObservableObject {
     func delete(_ name: String) {
         try? FileManager.default.removeItem(at: fileURL(name))
         tunnels.removeAll { $0.name == name }
+        onDeleted(name)
     }
 
     /// Imports `.conf` files and `.zip` archives. Returns localised error messages for failures.

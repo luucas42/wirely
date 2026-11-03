@@ -85,6 +85,12 @@ enum L: String, CaseIterable {
     case devLANBlocked, devPermission, devOpenSettings, devOfflineBody, devScanAgain, devNotify, devNotifyHint
     case kindRouter, kindComputer, kindPhone, kindTablet, kindTV, kindSpeaker, kindPrinter, kindSmartHome
     case kindConsole, kindNAS, kindWatch, kindUnknown
+    // Split tunnel
+    case splitErrNotAnAddress, splitErrBadPrefix, splitErrNotAHost, splitErrDuplicate, splitErrFull
+    case errSplitNotActive, errSplitInvalidRule
+    case splitSubDomainCount, splitSubDomainLooking, splitSubDomain, splitSingleAddress
+    case splitNetworkCount, splitNetwork, splitFromProfile
+    case splitUncovered, splitRejected, splitDNSOff, splitSummaryAll, splitSummaryN
 }
 
 final class L10n: ObservableObject {
@@ -179,6 +185,8 @@ final class L10n: ObservableObject {
         case "trace.ipv6Unsupported": return self(.errTraceIPv6)
         case "trace.socket": return format(.errTraceSocket, a)
         case "trace.busy": return self(.errTraceBusy)
+        case "split.notActive": return self(.errSplitNotActive)
+        case "split.invalidRule": return self(.errSplitInvalidRule)
         default: return fallback ?? self(.genericError)
         }
     }
