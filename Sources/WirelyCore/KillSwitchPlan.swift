@@ -60,6 +60,46 @@ public enum KillSwitchPlan {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// Name of the pf table that holds the destinations blocked in split mode.
+    public static let splitTable = "wirely_split"
+
+    /// Split-mode rules: everything stays open except destinations in the `wirely_split` table, which are
+    /// blocked unless they leave through the tunnel (`pass quick on <utun>` comes first). No final block-all.
+    /// - Parameter table: IP addresses / CIDR networks; anything else is skipped.
+    public static func splitRules(iface: String?, endpoints: [Endpoint], table: [String]) -> String {
+        var seen = Set<String>()
+        let entries = table.filter { IPNetwork($0) != nil && seen.insert($0).inserted }
+        var lines = ["# Wirely kill switch (generated, split)"]
+        lines.append(entries.isEmpty ? "table <\(splitTable)> persist"
+                                     : "table <\(splitTable)> persist { \(entries.joined(separator: ", ")) }")
+        lines.append("pass quick on lo0 all flags any keep state")
+        if let iface {
+            lines.append("pass quick on \(iface) all flags any keep state")
+        }
+        for ep in endpoints {
+            guard let ip = IPAddress(ep.host) else { continue }
+            let family = ip.family == .v4 ? "inet" : "inet6"
+            lines.append("pass out quick \(family) proto udp from any to \(ip) port \(ep.port) keep state")
+            if ip.family == .v4 {
+                lines.append("pass out quick inet proto udp from any to \(ip) "
+                             + "port \(TraceCollector.udpBasePort):\(traceLastPort) keep state")
+            }
+        }
+        lines.append("pass out quick inet proto udp from any port 68 to any port 67 keep state")
+        lines.append("pass in quick inet proto udp from any port 67 to any port 68 keep state")
+        lines.append("block drop out quick to <\(splitTable)>")
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    /// `addrs` must not be empty (pfctl rejects an empty list).
+    public static func tableAdd(_ addrs: [String]) -> NetCommand {
+        NetCommand(pfctl, ["-a", anchor, "-t", splitTable, "-T", "add"] + addrs)
+    }
+
+    public static func tableDelete(_ addrs: [String]) -> NetCommand {
+        NetCommand(pfctl, ["-a", anchor, "-t", splitTable, "-T", "delete"] + addrs)
+    }
+
     public static func load(file: String) -> NetCommand { NetCommand(pfctl, ["-a", anchor, "-f", file]) }
     public static let flush = NetCommand(pfctl, ["-a", anchor, "-F", "rules"])
     public static let showRules = NetCommand(pfctl, ["-a", anchor, "-s", "rules"])

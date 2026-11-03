@@ -102,7 +102,7 @@ private func tempSocketPath() -> String {
                                   trace: result)
     let backResponse = try JSONDecoder().decode(HelperResponse.self, from: JSONEncoder().encode(response))
     #expect(backResponse == response && backResponse.trace == result)
-    #expect(HelperConstants.helperVersion == 7)
+    #expect(HelperConstants.helperVersion == 8)
 }
 
 @Test func traceFieldsAreOptionalWhenDecoding() throws {
@@ -110,4 +110,26 @@ private func tempSocketPath() -> String {
     #expect(oldRequest.traceTarget == nil)
     let oldResponse = try JSONDecoder().decode(HelperResponse.self, from: Data(#"{"ok":true,"helperVersion":6}"#.utf8))
     #expect(oldResponse.trace == nil)
+}
+
+@Test func splitProtocolFieldsAreOptionalAndRoundTrip() throws {
+    #expect(HelperConstants.helperVersion == 8)
+    // Old helper/app JSON without the new fields still decodes.
+    let oldRequest = try JSONDecoder().decode(HelperRequest.self, from: Data(#"{"command":"up","tunnelName":"home","config":"x"}"#.utf8))
+    #expect(oldRequest.split == nil)
+    let oldStatus = try JSONDecoder().decode(TunnelStatus.self, from: Data(
+        #"{"state":"connected","rxBytes":1,"txBytes":2,"ignoredKeys":[],"killSwitch":true}"#.utf8))
+    #expect(oldStatus.split == nil)
+    #expect(oldStatus.splitDNS == nil)
+    #expect(oldStatus.killSwitch == true)
+
+    let request = HelperRequest(command: .split, split: ["example.com", "10.2.2.4"])
+    #expect(try JSONDecoder().decode(HelperRequest.self, from: JSONEncoder().encode(request)) == request)
+    let empty = HelperRequest(command: .up, tunnelName: "home", config: "x", split: [])
+    #expect(try JSONDecoder().decode(HelperRequest.self, from: JSONEncoder().encode(empty)).split == [])
+
+    let status = TunnelStatus(state: .connected, split: ["example.com": SplitRuleStatus(routed: 3, rejected: 1)], splitDNS: true)
+    let back = try JSONDecoder().decode(TunnelStatus.self, from: JSONEncoder().encode(status))
+    #expect(back == status)
+    #expect(back.split?["example.com"]?.rejected == 1)
 }

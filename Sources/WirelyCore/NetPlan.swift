@@ -163,4 +163,39 @@ public enum NetPlan {
     public static func endpointRouteDelete(_ ip: IPAddress) -> NetCommand {
         NetCommand(route, ["-q", "-n", "delete", ip.family == .v4 ? "-inet" : "-inet6", ip.description])
     }
+
+    // MARK: Split tunnel
+
+    /// Routes for "only selected" mode: address/network rules, the profile's non-default AllowedIPs and
+    /// host routes to its DNS servers. No default-route halves, no reject routes.
+    public static func splitTargets(config: TunnelConfig, rules: [SplitRule]) -> [IPNetwork] {
+        if config.interface.tableOff { return [] }
+        var seen = Set<IPNetwork>()
+        var out: [IPNetwork] = []
+        func add(_ n: IPNetwork) {
+            if seen.insert(n).inserted { out.append(n) }
+        }
+        func host(_ a: IPAddress) -> IPNetwork {
+            IPNetwork(address: a, prefixLength: a.family == .v4 ? 32 : 128)
+        }
+        for rule in rules {
+            switch rule {
+            case .domain: break
+            case .address(let a): add(host(a))
+            case .network(let n): add(n)
+            }
+        }
+        for n in SplitCoverage.profileNetworks(config) { add(n) }
+        for d in config.interface.dnsServers { add(host(d)) }
+        return out
+    }
+
+    /// Route for one learned address through the tunnel interface.
+    public static func hostRouteAdd(_ ip: IPAddress, iface: String) -> NetCommand {
+        NetCommand(route, ["-q", "-n", "add", ip.family == .v4 ? "-inet" : "-inet6", ip.description, "-interface", iface])
+    }
+
+    public static func hostRouteDelete(_ ip: IPAddress) -> NetCommand {
+        NetCommand(route, ["-q", "-n", "delete", ip.family == .v4 ? "-inet" : "-inet6", ip.description])
+    }
 }

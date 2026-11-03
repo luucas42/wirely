@@ -3,7 +3,7 @@ import Foundation
 public enum HelperConstants {
     public static let socketPath = "/var/run/wirely-helper.sock"
     public static let label = "io.github.luucas42.wirely.helper"
-    public static let helperVersion = 7
+    public static let helperVersion = 8
     public static let helperInstallPath = "/Library/PrivilegedHelperTools/io.github.luucas42.wirely.helper"
     public static let wireguardGoInstallPath = "/Library/PrivilegedHelperTools/io.github.luucas42.wirely.wireguard-go"
     public static let plistPath = "/Library/LaunchDaemons/io.github.luucas42.wirely.helper.plist"
@@ -28,12 +28,16 @@ public struct TunnelStatus: Equatable, Codable {
     /// and all traffic is being blocked until the user reconnects or disconnects.
     /// Optional so statuses from older helpers still decode.
     public var killSwitch: Bool?
+    /// Split tunnel only: rule text -> how many addresses are routed / rejected right now. nil = full tunnel.
+    public var split: [String: SplitRuleStatus]?
+    /// Split tunnel only: the local DNS proxy is running (false = site rules inactive, e.g. port 53 taken).
+    public var splitDNS: Bool?
 
     public init(state: TunnelState, tunnelName: String? = nil, interface: String? = nil,
                 connectedAt: Date? = nil, lastHandshake: Date? = nil,
                 rxBytes: UInt64 = 0, txBytes: UInt64 = 0,
                 endpoint: String? = nil, message: String? = nil, ignoredKeys: [String] = [],
-                killSwitch: Bool? = nil) {
+                killSwitch: Bool? = nil, split: [String: SplitRuleStatus]? = nil, splitDNS: Bool? = nil) {
         self.state = state
         self.tunnelName = tunnelName
         self.interface = interface
@@ -45,6 +49,8 @@ public struct TunnelStatus: Equatable, Codable {
         self.message = message
         self.ignoredKeys = ignoredKeys
         self.killSwitch = killSwitch
+        self.split = split
+        self.splitDNS = splitDNS
     }
 
     /// Traffic is blocked by the kill switch after the tunnel dropped.
@@ -53,7 +59,18 @@ public struct TunnelStatus: Equatable, Codable {
     public static let disconnected = TunnelStatus(state: .disconnected)
 }
 
-public enum HelperCommand: String, Codable { case up, down, status, version, trace }
+/// Addresses learned for one split rule.
+public struct SplitRuleStatus: Equatable, Codable {
+    public var routed: Int
+    /// Learned addresses left unrouted because no peer's AllowedIPs contain them.
+    public var rejected: Int
+    public init(routed: Int, rejected: Int) {
+        self.routed = routed
+        self.rejected = rejected
+    }
+}
+
+public enum HelperCommand: String, Codable { case up, down, status, version, trace, split }
 
 public struct HelperRequest: Codable, Equatable {
     public var command: HelperCommand
@@ -64,14 +81,19 @@ public struct HelperRequest: Codable, Equatable {
     public var allowLAN: Bool?
     /// `trace` only: host name or IPv4 literal to trace the route to.
     public var traceTarget: String?
+    /// `up` and `split`: split-tunnel rule texts (see `SplitRule.text`). nil on `up` = full tunnel;
+    /// non-nil, even empty = split mode. On `split` it replaces the running tunnel's rules.
+    public var split: [String]?
     public init(command: HelperCommand, tunnelName: String? = nil, config: String? = nil,
-                killSwitch: Bool? = nil, allowLAN: Bool? = nil, traceTarget: String? = nil) {
+                killSwitch: Bool? = nil, allowLAN: Bool? = nil, traceTarget: String? = nil,
+                split: [String]? = nil) {
         self.command = command
         self.tunnelName = tunnelName
         self.config = config
         self.killSwitch = killSwitch
         self.allowLAN = allowLAN
         self.traceTarget = traceTarget
+        self.split = split
     }
 }
 

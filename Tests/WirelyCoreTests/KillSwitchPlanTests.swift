@@ -69,3 +69,39 @@ import Testing
     let highestSeq = TraceCollector.seq(ttl: 30, round: ProbeSchedule.highestRound())
     #expect(Int(TraceCollector.udpBasePort) + Int(highestSeq) <= Int(KillSwitchPlan.traceLastPort))
 }
+
+@Test func splitRulesWithTable() {
+    let rules = KillSwitchPlan.splitRules(iface: "utun7", endpoints: [Endpoint(host: "203.0.113.5", port: 51820),
+                                                                      Endpoint(host: "vpn.example.com", port: 1)],
+                                          table: ["198.51.100.9", "10.8.0.0/16", "2001:db8::1", "198.51.100.9", "bad;entry"])
+    #expect(rules == """
+    # Wirely kill switch (generated, split)
+    table <wirely_split> persist { 198.51.100.9, 10.8.0.0/16, 2001:db8::1 }
+    pass quick on lo0 all flags any keep state
+    pass quick on utun7 all flags any keep state
+    pass out quick inet proto udp from any to 203.0.113.5 port 51820 keep state
+    pass out quick inet proto udp from any to 203.0.113.5 port 33434:34000 keep state
+    pass out quick inet proto udp from any port 68 to any port 67 keep state
+    pass in quick inet proto udp from any port 67 to any port 68 keep state
+    block drop out quick to <wirely_split>
+
+    """)
+    #expect(!rules.contains("block drop quick all"))
+}
+
+@Test func splitRulesEmptyTableAndHeldTunnel() {
+    let rules = KillSwitchPlan.splitRules(iface: nil, endpoints: [], table: [])
+    #expect(rules.contains("\ntable <wirely_split> persist\n"))
+    #expect(!rules.contains("{"))
+    #expect(!rules.contains("utun"))
+    let tableLine = rules.split(separator: "\n").firstIndex { $0.hasPrefix("table ") }!
+    let blockLine = rules.split(separator: "\n").firstIndex { $0.hasPrefix("block ") }!
+    #expect(tableLine < blockLine)
+}
+
+@Test func splitTableCommands() {
+    #expect(KillSwitchPlan.tableAdd(["198.51.100.9", "10.8.0.0/16"]) == NetCommand(
+        "/sbin/pfctl", ["-a", "com.apple/250.Wirely", "-t", "wirely_split", "-T", "add", "198.51.100.9", "10.8.0.0/16"]))
+    #expect(KillSwitchPlan.tableDelete(["2001:db8::1"]) == NetCommand(
+        "/sbin/pfctl", ["-a", "com.apple/250.Wirely", "-t", "wirely_split", "-T", "delete", "2001:db8::1"]))
+}

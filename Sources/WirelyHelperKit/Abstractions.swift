@@ -62,10 +62,23 @@ public struct KillSwitchRecord: Equatable, Codable {
     public var allowLAN: Bool
     /// Resolved WireGuard servers whose UDP stays allowed.
     public var endpoints: [Endpoint]
-    public init(token: String?, allowLAN: Bool, endpoints: [Endpoint]) {
+    /// Split tunnel: addresses/networks the rules block (the `wirely_split` table). nil = full block.
+    public var splitTable: [String]?
+    public init(token: String?, allowLAN: Bool, endpoints: [Endpoint], splitTable: [String]? = nil) {
         self.token = token
         self.allowLAN = allowLAN
         self.endpoints = endpoints
+        self.splitTable = splitTable
+    }
+
+    private enum CodingKeys: String, CodingKey { case token, allowLAN, endpoints, splitTable }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        token = try c.decodeIfPresent(String.self, forKey: .token)
+        allowLAN = try c.decode(Bool.self, forKey: .allowLAN)
+        endpoints = try c.decode([Endpoint].self, forKey: .endpoints)
+        splitTable = try c.decodeIfPresent([String].self, forKey: .splitTable)
     }
 }
 

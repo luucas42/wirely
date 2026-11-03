@@ -92,6 +92,10 @@ func runDaemon(_ args: [String]) -> Never {
                                       helperVersion: version, errorCode: traceError?.code ?? "trace.socket",
                                       errorArg: traceError?.arg)
             }
+        case .split:
+            // Live rule updates arrive with the helper integration step.
+            return HelperResponse(ok: false, error: "Bölünmüş tünel etkin değil", status: manager.status(),
+                                  helperVersion: version, errorCode: "split.notActive")
         case .status, .version:
             return HelperResponse(ok: true, error: nil, status: manager.status(), helperVersion: version)
         }
