@@ -10,7 +10,7 @@ public final class SplitRouteTable {
     private let cap: Int
     private var byRule: [SplitRule: [IPAddress]] = [:]
     private var owners: [IPAddress: Set<SplitRule>] = [:]
-    private var rejected: [SplitRule: Int] = [:]
+    private var rejected: [SplitRule: Set<IPAddress>] = [:]
 
     public init(cap: Int = SplitRouteTable.defaultCap) {
         self.cap = cap
@@ -47,11 +47,12 @@ public final class SplitRouteTable {
         return gone
     }
 
-    /// Counts learned addresses that were not routed (outside the peers' AllowedIPs).
-    public func reject(rule: SplitRule, count: Int) {
-        guard count > 0 else { return }
+    /// Remembers learned addresses that were not routed (outside the peers' AllowedIPs). A set, so the
+    /// same address answered again does not inflate the count.
+    public func reject(rule: SplitRule, addresses: [IPAddress]) {
+        guard !addresses.isEmpty else { return }
         lock.lock(); defer { lock.unlock() }
-        rejected[rule, default: 0] += count
+        rejected[rule, default: []].formUnion(addresses)
     }
 
     /// Number of addresses learned for `rule` (== the cap when it is full).
@@ -65,7 +66,7 @@ public final class SplitRouteTable {
         lock.lock(); defer { lock.unlock() }
         var out: [String: SplitRuleStatus] = [:]
         for rule in Set(byRule.keys).union(rejected.keys) {
-            out[rule.text] = SplitRuleStatus(routed: byRule[rule]?.count ?? 0, rejected: rejected[rule] ?? 0)
+            out[rule.text] = SplitRuleStatus(routed: byRule[rule]?.count ?? 0, rejected: rejected[rule]?.count ?? 0)
         }
         return out
     }

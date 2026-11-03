@@ -46,9 +46,10 @@ private let internalRule = SplitRule.domain("intranet.example.com")
 @Test func routeTableRejectCountsAppearInStatus() {
     let t = SplitRouteTable()
     _ = t.learn(rule: example, addresses: [ip("198.51.100.1")])
-    t.reject(rule: example, count: 2)
-    t.reject(rule: internalRule, count: 1)
-    t.reject(rule: internalRule, count: 0)
+    t.reject(rule: example, addresses: [ip("203.0.113.8"), ip("203.0.113.9"), ip("203.0.113.8")])
+    t.reject(rule: example, addresses: [ip("203.0.113.9")])      // repeated answer: no inflation
+    t.reject(rule: internalRule, addresses: [ip("203.0.113.8")])
+    t.reject(rule: internalRule, addresses: [])
     #expect(t.status == ["example.com": SplitRuleStatus(routed: 1, rejected: 2),
                          "intranet.example.com": SplitRuleStatus(routed: 0, rejected: 1)])
     _ = t.forget(rule: internalRule)

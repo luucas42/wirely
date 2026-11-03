@@ -166,6 +166,12 @@ public enum NetPlan {
 
     // MARK: Split tunnel
 
+    /// Makes the system resolver forget cached answers (after DNS or split-rule changes).
+    public static let flushDNSCache: [NetCommand] = [
+        NetCommand("/usr/bin/dscacheutil", ["-flushcache"]),
+        NetCommand("/usr/bin/killall", ["-HUP", "mDNSResponder"]),
+    ]
+
     /// Routes for "only selected" mode: address/network rules, the profile's non-default AllowedIPs and
     /// host routes to its DNS servers. No default-route halves, no reject routes.
     public static func splitTargets(config: TunnelConfig, rules: [SplitRule]) -> [IPNetwork] {

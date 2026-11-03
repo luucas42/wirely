@@ -6,7 +6,7 @@ import WirelyHelperKit
 let usage = """
 Kullanım:
   wirely-helper daemon --allowed-uid <uid> --wireguard-go <yol>
-  wirely-helper ctl status | down | up <conf-yolu> [--name N] | trace <hedef>
+  wirely-helper ctl status | down | up <conf-yolu> [--name N] [--split a,b,c] | split a,b,c | trace <hedef>
   wirely-helper trace <hedef>
   wirely-helper cleanup
 """
@@ -26,6 +26,17 @@ func option(_ name: String, in args: [String]) -> String? {
     return args[i + 1]
 }
 
+struct InvalidSplitRule: Error { let text: String }
+
+func parseSplitRules(_ texts: [String]) -> Result<[SplitRule], InvalidSplitRule> {
+    var rules: [SplitRule] = []
+    for text in texts {
+        guard case .success(let rule) = SplitRule.parse(text) else { return .failure(InvalidSplitRule(text: text)) }
+        rules.append(rule)
+    }
+    return .success(rules)
+}
+
 func makeManager(runner: CommandRunner, wireguardGo: String, queue: DispatchQueue, log: FileLog) -> TunnelManager {
     TunnelManager(
         runner: runner,
@@ -34,7 +45,9 @@ func makeManager(runner: CommandRunner, wireguardGo: String, queue: DispatchQueu
         store: FileStateStore(),
         dns: SystemDNSConfigurator(),
         firewall: PFFirewall(runner: runner),
-        log: log.write)
+        log: log.write,
+        makeSplitProxy: { SplitDNSProxy(listen: IPAddress("127.0.0.1")!, port: 53, config: $0, onLearn: $1) },
+        normalDNS: SystemDNSUpstreams())
 }
 
 func runDaemon(_ args: [String]) -> Never {
@@ -57,16 +70,27 @@ func runDaemon(_ args: [String]) -> Never {
         directCommands: [.trace]
     ) { request in
         let version = HelperConstants.helperVersion
+        func invalidRule(_ text: String) -> HelperResponse {
+            HelperResponse(ok: false, error: "Geçersiz kural: \(text)", status: nil, helperVersion: version,
+                           errorCode: "split.invalidRule", errorArg: text)
+        }
         switch request.command {
         case .up:
             guard let config = request.config, let name = request.tunnelName else {
                 return HelperResponse(ok: false, error: "Yapılandırma eksik", status: nil, helperVersion: version,
                                       errorCode: "request.missingConfig")
             }
+            var splitRules: [SplitRule]?
+            if let texts = request.split {
+                switch parseSplitRules(texts) {
+                case .success(let r): splitRules = r
+                case .failure(let bad): return invalidRule(bad.text)
+                }
+            }
             do {
                 let status = try manager.up(name: name, configText: config,
                                             killSwitch: request.killSwitch ?? false,
-                                            allowLAN: request.allowLAN ?? true)
+                                            allowLAN: request.allowLAN ?? true, split: splitRules)
                 return HelperResponse(ok: true, error: nil, status: status, helperVersion: version)
             } catch {
                 let coded = (error as? TunnelError)?.codeAndArg
@@ -93,9 +117,22 @@ func runDaemon(_ args: [String]) -> Never {
                                       errorArg: traceError?.arg)
             }
         case .split:
-            // Live rule updates arrive with the helper integration step.
-            return HelperResponse(ok: false, error: "Bölünmüş tünel etkin değil", status: manager.status(),
-                                  helperVersion: version, errorCode: "split.notActive")
+            guard let texts = request.split else { return invalidRule("") }
+            let rules: [SplitRule]
+            switch parseSplitRules(texts) {
+            case .success(let r): rules = r
+            case .failure(let bad): return invalidRule(bad.text)
+            }
+            do {
+                let status = try manager.updateSplit(rules)
+                fileLog.write("split: \(rules.count) kural güncellendi")
+                return HelperResponse(ok: true, error: nil, status: status, helperVersion: version)
+            } catch {
+                let coded = (error as? TunnelError)?.codeAndArg
+                return HelperResponse(ok: false, error: error.localizedDescription,
+                                      status: manager.status(), helperVersion: version,
+                                      errorCode: coded?.code, errorArg: coded?.arg)
+            }
         case .status, .version:
             return HelperResponse(ok: true, error: nil, status: manager.status(), helperVersion: version)
         }
@@ -142,7 +179,11 @@ func runCtl(_ args: [String]) -> Never {
               let text = String(data: data, encoding: .utf8) else {
             fail("Yapılandırma dosyası okunamadı: \(path)")
         }
-        request = HelperRequest(command: .up, tunnelName: name, config: text)
+        let split = option("--split", in: args).map { $0.split(separator: ",").map(String.init) }
+        request = HelperRequest(command: .up, tunnelName: name, config: text, split: split)
+    case "split":
+        guard args.count >= 2 else { usageExit() }
+        request = HelperRequest(command: .split, split: args[1].split(separator: ",").map(String.init))
     case "trace":
         guard args.count >= 2 else { usageExit() }
         request = HelperRequest(command: .trace, traceTarget: args[1])

@@ -107,12 +107,14 @@ public struct PersistedState: Equatable, Codable {
     public var rejectRoutes: [IPNetwork]
     /// Set while the kill switch's pf rules are loaded for this tunnel (or, after a drop, still blocking).
     public var killSwitch: KillSwitchRecord?
+    /// Split tunnel: the rule texts in force (nil = full tunnel).
+    public var split: [String]?
 
     public init(tunnelName: String, interface: String, wireguardPID: Int32?,
                 endpointRoutes: [EndpointRoute], dnsBackups: [DNSBackup],
                 dnsServers: [IPAddress], dnsSearch: [String],
                 connectedAt: Date, ignoredKeys: [String], rejectRoutes: [IPNetwork] = [],
-                killSwitch: KillSwitchRecord? = nil) {
+                killSwitch: KillSwitchRecord? = nil, split: [String]? = nil) {
         self.tunnelName = tunnelName
         self.interface = interface
         self.wireguardPID = wireguardPID
@@ -124,11 +126,12 @@ public struct PersistedState: Equatable, Codable {
         self.ignoredKeys = ignoredKeys
         self.rejectRoutes = rejectRoutes
         self.killSwitch = killSwitch
+        self.split = split
     }
 
     private enum CodingKeys: String, CodingKey {
         case tunnelName, interface, wireguardPID, endpointRoutes, dnsBackups, dnsServers, dnsSearch
-        case connectedAt, ignoredKeys, rejectRoutes, killSwitch
+        case connectedAt, ignoredKeys, rejectRoutes, killSwitch, split
     }
 
     public init(from decoder: Decoder) throws {
@@ -144,6 +147,7 @@ public struct PersistedState: Equatable, Codable {
         ignoredKeys = try c.decode([String].self, forKey: .ignoredKeys)
         rejectRoutes = try c.decodeIfPresent([IPNetwork].self, forKey: .rejectRoutes) ?? []
         killSwitch = try c.decodeIfPresent(KillSwitchRecord.self, forKey: .killSwitch)
+        split = try c.decodeIfPresent([String].self, forKey: .split)
     }
 }
 
@@ -152,6 +156,8 @@ public enum TunnelError: Error, LocalizedError, Equatable {
     case resolve(String)
     case commandFailed(String)
     case wireguard(String)
+    /// `updateSplit` while no split-mode tunnel is connected.
+    case splitNotActive
 
     public var errorDescription: String? {
         switch self {
@@ -159,6 +165,7 @@ public enum TunnelError: Error, LocalizedError, Equatable {
         case .resolve(let host): return "Sunucu adresi çözülemedi: \(host)"
         case .commandFailed(let cmd): return "Komut başarısız: \(cmd)"
         case .wireguard(let msg): return "wireguard-go hatası: \(msg)"
+        case .splitNotActive: return "Bölünmüş tünel etkin değil"
         }
     }
 
@@ -179,6 +186,7 @@ public enum TunnelError: Error, LocalizedError, Equatable {
         case .resolve(let host): return ("resolve", host)
         case .commandFailed(let cmd): return ("commandFailed", cmd)
         case .wireguard(let msg): return ("wireguard", msg)
+        case .splitNotActive: return ("split.notActive", nil)
         }
     }
 }
