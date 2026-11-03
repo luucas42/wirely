@@ -362,6 +362,9 @@ enum PreviewRenderer {
         let minSize = CGSize(width: 820, height: 560)
         let splitScenarios: [Scenario] = [
             splitScenario("split-panel", status: splitConnected),
+            // README: a full-tunnel server, so every row reads clean.
+            splitScenario("split-panel-docs", status: splitConnected,
+                          rules: ["intranet.example.com", "10.2.2.4", "10.8.0.0/16"], allowed: defaultAllowed),
             splitScenario("split-panel-empty", status: splitEmpty, rules: [], allowed: defaultAllowed),
             splitScenario("split-panel-all", status: connected, mode: .all),
             splitScenario("split-panel-disconnected", status: .disconnected),

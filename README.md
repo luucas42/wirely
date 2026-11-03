@@ -145,6 +145,10 @@ Switch to **Devices** at the top left. The router sits in the middle, every othe
 
 ### Split tunnel
 
+<p align="center">
+  <img src="docs/images/split-dark.png" width="620" alt="Wirely split tunnel: the map with the status card reading Split, 3 targets, and on the right the split panel set to Only selected with intranet.example.com, 10.2.2.4 and 10.8.0.0/16 in the list">
+</p>
+
 The button under the status on the main page (it reads *All traffic through the tunnel* or *Split, 3 targets*) opens the split panel. Choose **All traffic** (the default) or **Only selected**, then type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`) or a network (`10.8.0.0/16`). Esc closes the panel.
 
 - **IP rules** become routes through the tunnel. The profile's own networks (AllowedIPs other than `0.0.0.0/0`) stay in the tunnel and show as *From the profile*.
