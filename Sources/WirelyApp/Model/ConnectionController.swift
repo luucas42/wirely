@@ -263,6 +263,9 @@ final class ConnectionController: ObservableObject {
     /// `auto` marks a planner-driven retry: it neither resets the planner nor reports errors.
     func connect(_ tunnel: StoredTunnel, auto: Bool = false) async {
         guard !busy else { return }
+        // A service from before exclude mode would ignore the direction and tunnel only the list, so it gets
+        // the full tunnel instead (never less protection than asked for) and the app asks for the update.
+        let excludeHeldBack = !excludeSupported && splitStore.settings(for: tunnel.name).mode == .excluded
         if !auto {
             planner.userConnecting(tunnel.name)
             refreshReconnectStatus()
@@ -275,10 +278,12 @@ final class ConnectionController: ObservableObject {
         let split = splitStore.settings(for: tunnel.name)
         let request = HelperRequest(command: .up, tunnelName: tunnel.name, config: tunnel.text,
                                     killSwitch: KillSwitchSettings.enabled, allowLAN: KillSwitchSettings.allowLAN,
-                                    split: split.mode == .selected ? split.rules.map(\.text) : nil)
+                                    split: split.mode == .all || excludeHeldBack ? nil : split.expandedRules(for: split.mode),
+                                    splitExclude: split.mode == .excluded && !excludeHeldBack ? true : nil)
         switch await call(request) {
         case .success(let r):
             if !r.ok, !auto { lastError = Self.describe(r, fallback: .connectFailed) }
+            else if excludeHeldBack, !auto { lastError = L10n.shared(.serviceUpdateNeeded) }
             if let s = r.status { apply(s) }
         case .failure(let e):
             if e == .notRunning { helperState = .checking }
@@ -359,29 +364,64 @@ extension ConnectionController {
     /// The local DNS proxy runs (false = site rules are off); nil outside split mode.
     var splitDNSActive: Bool? { status.splitDNS }
 
-    /// Saves the mode; a connected `tunnel` reconnects to apply it.
+    /// First service version that understands `splitExclude`.
+    static let excludeMinHelperVersion = 9
+
+    /// False while the installed service is older than exclude mode (the app then asks for an update).
+    var excludeSupported: Bool {
+        if case .outdated(let v) = helperState, v < Self.excludeMinHelperVersion { return false }
+        return true
+    }
+
+    /// Saves the mode (and the split direction it names); a connected `tunnel` reconnects to apply it.
     func setSplitMode(_ mode: SplitMode, for tunnel: StoredTunnel) async {
         guard splitStore.settings(for: tunnel.name).mode != mode else { return }
         splitStore.setMode(mode, for: tunnel.name)
         if isOn(tunnel) { await connect(tunnel) }
     }
 
-    func addSplitRule(_ input: String, for tunnel: StoredTunnel) async -> SplitAddError? {
-        if let error = splitStore.add(input, for: tunnel.name) { return error }
-        await pushSplitRules(for: tunnel)
-        return nil
+    /// Adds what was typed to the list shown (an alias such as `youtube.com` adds its group). Adding while
+    /// the mode is "all" switches to the remembered split direction.
+    func addSplitEntry(_ input: String, for tunnel: StoredTunnel) async -> SplitAddOutcome {
+        let s = splitStore.settings(for: tunnel.name)
+        let outcome = splitStore.add(input, to: s.activeMode, for: tunnel.name)
+        if outcome.succeeded { await applyListChange(for: tunnel, wasMode: s.mode, lastSplit: s.lastSplit) }
+        return outcome
     }
 
-    func removeSplitRule(_ rule: SplitRule, for tunnel: StoredTunnel) async {
-        splitStore.remove(rule, for: tunnel.name)
+    /// Adds the group to the shown list, or removes it when it is already there.
+    func toggleGroup(_ id: String, for tunnel: StoredTunnel) async -> SplitToggleOutcome {
+        let s = splitStore.settings(for: tunnel.name)
+        let outcome = splitStore.toggleGroup(id, in: s.activeMode, for: tunnel.name)
+        switch outcome {
+        case .added: await applyListChange(for: tunnel, wasMode: s.mode, lastSplit: s.lastSplit)
+        case .removed: await pushSplitRules(for: tunnel)
+        case .failed: break
+        }
+        return outcome
+    }
+
+    func removeSplitEntry(_ entry: SplitEntry, for tunnel: StoredTunnel) async {
+        let s = splitStore.settings(for: tunnel.name)
+        splitStore.remove(entry, from: s.activeMode, for: tunnel.name)
         await pushSplitRules(for: tunnel)
     }
 
-    /// Sends the saved list to the running split tunnel; the saved rules stay even if that fails.
+    private func applyListChange(for tunnel: StoredTunnel, wasMode: SplitMode, lastSplit: SplitMode) async {
+        if wasMode == .all {
+            await setSplitMode(lastSplit, for: tunnel)
+        } else {
+            await pushSplitRules(for: tunnel)
+        }
+    }
+
+    /// Sends the saved list to the running split tunnel; the saved entries stay even if that fails.
+    /// The direction never changes live, so only a list of the running direction is sent.
     private func pushSplitRules(for tunnel: StoredTunnel) async {
         guard state(for: tunnel) == .connected, status.split != nil else { return }
-        let rules = splitStore.settings(for: tunnel.name).rules.map(\.text)
-        switch await call(HelperRequest(command: .split, split: rules)) {
+        let s = splitStore.settings(for: tunnel.name)
+        guard s.mode != .all, (status.splitExclude ?? false) == (s.mode == .excluded) else { return }
+        switch await call(HelperRequest(command: .split, split: s.expandedRules(for: s.mode))) {
         case .success(let r):
             if !r.ok { lastError = Self.describe(r, fallback: .genericError) }
             if let s = r.status { apply(s) }

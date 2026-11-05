@@ -144,8 +144,8 @@ struct StatusCard: View {
         case .noResponse: return (l10n(.noResponseHint), true)
         case .failed:
             if status.isBlockedByKillSwitch {
-                let splitting = controller.splitStore.settings(for: tunnel.name).mode == .selected
-                return (l10n(splitting ? .splitBlockedHint : .internetBlockedHint), true)
+                let mode = controller.splitStore.settings(for: tunnel.name).mode
+                return (l10n(mode == .selected ? .splitBlockedHint : mode == .excluded ? .splitBlockedExcluded : .internetBlockedHint), true)
             }
             return (status.message ?? controller.lastError ?? l10n(.genericError), true)
         case .invalid: return (configError, true)

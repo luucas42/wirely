@@ -21,7 +21,7 @@ struct SplitPill: View {
     }
 
     /// Split mode stands out in cobalt; "All traffic" stays quiet.
-    private var active: Bool { store.settings(for: tunnel.name).mode == .selected }
+    private var active: Bool { store.settings(for: tunnel.name).mode != .all }
 
     private var face: some View {
         HStack(spacing: 6) {
@@ -159,13 +159,13 @@ struct SplitPanel: View {
         let input = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !input.isEmpty else { return }
         Task {
-            if let failure = await controller.addSplitRule(input, for: tunnel) {
-                error = failure.message(l10n)
+            let outcome = await controller.addSplitEntry(input, for: tunnel)
+            if let failure = outcome.error {
+                error = failure.message(l10n, list: settings.activeMode)
                 return
             }
             draft = ""
             error = nil
-            if settings.mode == .all { await controller.setSplitMode(.selected, for: tunnel) }
         }
     }
 
@@ -173,7 +173,7 @@ struct SplitPanel: View {
 
     private var list: some View {
         let content = VStack(spacing: 0) {
-            if settings.rules.isEmpty {
+            if settings.current.isEmpty {
                 Text(l10n(.splitEmpty))
                     .font(.mr(12.5, 600)).foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.center)
@@ -182,7 +182,7 @@ struct SplitPanel: View {
             }
             ForEach(rows) { row in
                 SplitRowView(row: row, last: row.id == rows.last?.id) {
-                    if let rule = row.rule { Task { await controller.removeSplitRule(rule, for: tunnel) } }
+                    if let entry = row.entry { Task { await controller.removeSplitEntry(entry, for: tunnel) } }
                 }
             }
         }
@@ -200,7 +200,7 @@ struct SplitPanel: View {
         .frame(maxWidth: .infinity)
         .background(RoundedRectangle(cornerRadius: 16).fill(Theme.card))
         .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.hairline, lineWidth: 1))
-        .opacity(selectedMode ? 1 : 0.45)
+        .opacity(settings.mode != .all ? 1 : 0.45)
         .layoutPriority(-1)
     }
 
@@ -237,6 +237,7 @@ private struct SplitRowView: View {
         case .address: return "server.rack"
         case .network: return "point.3.connected.trianglepath.dotted"
         case .profile: return "lock.shield"
+        case .group: return "square.stack.3d.up"
         }
     }
 

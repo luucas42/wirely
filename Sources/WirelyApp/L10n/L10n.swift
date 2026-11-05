@@ -96,6 +96,15 @@ enum L: String, CaseIterable {
     case splitPlaceholder, splitAddAction, splitRemove, splitEmpty
     case splitAppliedNow, splitAppliedOnConnect, splitModeReconnects, splitBrowserNote
     case splitBannerDNS, splitBlockedHint
+    // Split tunnel: exclude direction and service groups
+    case splitTopSplit, splitDirLabel, splitDirInclude, splitDirExclude
+    case splitHintAllLists, splitHintExcluded, splitPlaceholderExcluded, splitEmptyExcluded
+    case splitListLabelInclude, splitListLabelExclude, splitErrNotAHostExcluded
+    case splitSuggestionTail, splitAddGroup, splitAutoGroupNote, splitPresets
+    case splitGroupShow, splitGroupHide, splitGroupSubIn, splitGroupSubOut, splitGroupSubIdle
+    case splitSubDomainCountOut, splitSingleAddressOut, splitExcludeIPv6
+    case splitExcludeFooter, splitBlockedExcluded
+    case splitSummaryExcluded, splitStatusSelected, splitStatusExclOne, splitStatusExclTwo, splitStatusExclMany
 }
 
 final class L10n: ObservableObject {
