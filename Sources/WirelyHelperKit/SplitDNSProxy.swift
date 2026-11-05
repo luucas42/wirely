@@ -33,11 +33,14 @@ public struct SplitDNSConfig {
     public private(set) var normal: [DNSUpstream]
     /// The tunnel has an IPv6 address: AAAA answers are learned instead of suppressed.
     public var tunnelIPv6: Bool
+    /// When every listed upstream fails, a matching name is tried on the normal upstreams before SERVFAIL.
+    /// Exclude mode only: in include mode listed names must never go to the network's DNS.
+    public var listedFallsBackToNormal: Bool
 
     /// Loopback and unspecified upstreams are dropped (the proxy would query itself), unless
     /// `allowLoopbackUpstreams` is set; only tests need that, to reach a fake server on 127.0.0.1.
     public init(rules: [SplitRule], listed: [DNSUpstream], normal: [DNSUpstream], tunnelIPv6: Bool,
-                allowLoopbackUpstreams: Bool = false) {
+                listedFallsBackToNormal: Bool = false, allowLoopbackUpstreams: Bool = false) {
         func keep(_ list: [DNSUpstream]) -> [DNSUpstream] {
             allowLoopbackUpstreams ? list : list.filter { !$0.address.isLoopbackOrUnspecified }
         }
@@ -45,6 +48,7 @@ public struct SplitDNSConfig {
         self.listed = keep(listed)
         self.normal = keep(normal)
         self.tunnelIPv6 = tunnelIPv6
+        self.listedFallsBackToNormal = listedFallsBackToNormal
     }
 }
 
@@ -241,13 +245,17 @@ public final class SplitDNSProxy {
         if rule != nil, q.type == DNSMessage.typeHTTPS || (q.type == DNSMessage.typeAAAA && !cfg.tunnelIPv6) {
             return DNSMessage.emptyResponse(to: query) ?? DNSMessage.servfail(to: query)
         }
-        let servers = rule != nil && !cfg.listed.isEmpty ? cfg.listed : cfg.normal
-        for server in servers {
-            guard !isStopped else { return nil }
-            let reply = tcp ? forwardTCP(query, to: server, id: q.id) : forwardUDP(query, to: server, id: q.id)
-            if let reply {
-                if let rule { learn(rule, DNSMessage.answerAddresses(reply)) }
-                return reply
+        let useListed = rule != nil && !cfg.listed.isEmpty
+        var attempts = [useListed ? cfg.listed : cfg.normal]
+        if useListed, cfg.listedFallsBackToNormal { attempts.append(cfg.normal) }
+        for servers in attempts {
+            for server in servers {
+                guard !isStopped else { return nil }
+                let reply = tcp ? forwardTCP(query, to: server, id: q.id) : forwardUDP(query, to: server, id: q.id)
+                if let reply {
+                    if let rule { learn(rule, DNSMessage.answerAddresses(reply)) }
+                    return reply
+                }
             }
         }
         return DNSMessage.servfail(to: query)

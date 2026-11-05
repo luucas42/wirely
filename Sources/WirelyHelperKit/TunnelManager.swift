@@ -634,16 +634,20 @@ public final class TunnelManager {
     /// Exclude mode: listed names go to the network's own DNS servers, bound to the physical interface (so
     /// they leave outside the tunnel); everything else to the profile's servers through the tunnel, or to
     /// the same servers unbound when the profile has none. nil when the network has no usable server.
+    /// IPv4 servers only: exclude mode is IPv4-only, and a v6 socket bound to the physical interface can
+    /// never pass the tunnel's v6 routes. If none of them answers, listed names fall back to the normal servers.
     private func excludeDNSConfig(_ ctx: SplitContext, backups: [DNSBackup]) -> SplitDNSConfig? {
         let physical = ctx.defaults.v4Interface
         let listed = normalDNS.normalUpstreams(backups: backups)
-            .filter { !$0.isLoopbackOrUnspecified }
+            .filter { !$0.isLoopbackOrUnspecified && $0.family == .v4 }
             .map { DNSUpstream(address: $0, interface: physical) }
         if listed.isEmpty { return nil }
+        if physical == nil { log("Bölünmüş tünel: fiziksel arayüz bulunamadı, listedekiler bağlanmadan sorgulanacak") }
         let families = ctx.tunnelFamilies
         var normal = ctx.config.interface.dnsServers.filter { families.contains($0.family) }.map { DNSUpstream(address: $0) }
         if normal.isEmpty { normal = listed.map { DNSUpstream(address: $0.address) } }
-        return SplitDNSConfig(rules: ctx.rules, listed: listed, normal: normal, tunnelIPv6: false)
+        return SplitDNSConfig(rules: ctx.rules, listed: listed, normal: normal, tunnelIPv6: false,
+                               listedFallsBackToNormal: true)
     }
 
     /// Exclude mode: starts the proxy and points every service at it; false (nothing changed) on every
@@ -663,6 +667,9 @@ public final class TunnelManager {
         guard let cfg = excludeDNSConfig(ctx, backups: backups) else {
             log("Bölünmüş tünel: kullanılabilir DNS sunucusu yok, site kuralları devre dışı")
             return false
+        }
+        for up in cfg.listed where !ctx.filter.connected.contains(where: { $0.contains(up.address) }) {
+            log("Bölünmüş tünel: DNS sunucusu \(up.address) yerel ağda değil; listedeki adlar gerekirse tünelden çözülecek")
         }
         let proxy = makeSplitProxy(cfg, makeLearnHook(ctx))
         do { try proxy.start() } catch {

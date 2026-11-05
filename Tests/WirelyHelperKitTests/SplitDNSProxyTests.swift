@@ -243,9 +243,9 @@ private final class Learned {
 private let example = SplitRule.domain("example.com")
 
 private func config(rules: [SplitRule] = [example], listed: [FakeDNS] = [], normal: [FakeDNS] = [],
-                    ipv6: Bool = false) -> SplitDNSConfig {
+                    ipv6: Bool = false, fallback: Bool = false) -> SplitDNSConfig {
     SplitDNSConfig(rules: rules, listed: listed.map(\.upstream), normal: normal.map(\.upstream),
-                   tunnelIPv6: ipv6, allowLoopbackUpstreams: true)
+                   tunnelIPv6: ipv6, listedFallsBackToNormal: fallback, allowLoopbackUpstreams: true)
 }
 
 private func makeProxy(_ cfg: SplitDNSConfig, learned: Learned = Learned(), timeout: TimeInterval = 0.2,
@@ -305,6 +305,36 @@ private func makeProxy(_ cfg: SplitDNSConfig, learned: Learned = Learned(), time
         #expect(learned.all[0].0 == example)
         #expect(learned.all[0].1 == [IPAddress("198.51.100.9")!, IPAddress("198.51.100.10")!])
         #expect(listed.hits.count == 1 && normal.hits.isEmpty)
+    }
+
+    @Test func failedListedFallsBackToNormalAndStillLearns() throws {
+        let dead = try FakeDNS { _, _ in FakeDNS.Reply(bytes: nil) }
+        let normal = try FakeDNS(handler: answers(["203.0.113.7"]))
+        defer { dead.stop(); normal.stop() }
+        let learned = Learned()
+        let proxy = try makeProxy(config(listed: [dead], normal: [normal], fallback: true), learned: learned)
+        defer { proxy.stop() }
+
+        let query = q("app.example.com")
+        #expect(udpExchange(port: proxy.boundPort, query) == canned(query, ["203.0.113.7"]))
+        #expect(dead.hits.count == 1 && normal.hits.count == 1)
+        #expect(learned.all.count == 1)
+        #expect(learned.all[0].0 == example)
+        #expect(learned.all[0].1 == [IPAddress("203.0.113.7")!])
+    }
+
+    @Test func failedListedWithoutFallbackIsServfailAndLearnsNothing() throws {
+        let dead = try FakeDNS { _, _ in FakeDNS.Reply(bytes: nil) }
+        let normal = try FakeDNS(handler: answers(["203.0.113.7"]))
+        defer { dead.stop(); normal.stop() }
+        let learned = Learned()
+        let proxy = try makeProxy(config(listed: [dead], normal: [normal], fallback: false), learned: learned)
+        defer { proxy.stop() }
+
+        let r = try #require(udpExchange(port: proxy.boundPort, q("app.example.com")))
+        #expect(rcode(r) == 2)
+        #expect(normal.hits.isEmpty)
+        #expect(learned.all.isEmpty)
     }
 
     @Test func emptyListedFallsBackToNormal() throws {

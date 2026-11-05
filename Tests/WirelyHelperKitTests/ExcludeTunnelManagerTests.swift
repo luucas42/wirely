@@ -387,6 +387,16 @@ private let exampleOrg = SplitRule.domain("example.org")
     #expect(env.proxy.config.normal[0].interface == nil)
 }
 
+@Test func excludeUpKeepsOnlyIPv4NetworkServersAndFallsBackToNormal() throws {
+    let env = Env()
+    env.normal.result = [ip("192.168.1.1"), ip("2001:db8::53")]
+    try env.up([example], killSwitch: true)
+    #expect(env.proxy.config.listed == [DNSUpstream(address: ip("192.168.1.1"), interface: "en0")])
+    #expect(env.proxy.config.listedFallsBackToNormal)
+    #expect(env.runner.ran(KillSwitchPlan.tableAdd(["192.168.1.1"]).description))
+    #expect(!env.runner.commands.contains { $0.description.contains("2001:db8") })
+}
+
 @Test func excludeUpPutsTheNormalServersIntoThePFTable() throws {
     let env = Env()
     try env.up([example], killSwitch: true)
