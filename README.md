@@ -40,7 +40,7 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 - **Survives network changes** — Wi-Fi switches and sleep/wake re-point the server route automatically.
 - **Route on the map** — trace the path to your VPN server or any site in about a second: every stop on the map, the encrypted part and the open-internet part drawn differently, and the stop where latency jumps. [More below](#route-trace).
 - **Devices on your network** — a map of everything on your Wi-Fi or Ethernet with the router in the middle, with names, kinds and vendors, an open-port check on request, and a notification when a device you haven't seen before joins. [More below](#devices).
-- **Split tunnel** — per profile, send only the sites and IPs you pick through the tunnel and everything else over your normal connection; add or remove them while connected. [More below](#split-tunnel).
+- **Split tunnel** — per profile, either send only the sites and IPs you pick through the tunnel, or send everything through it except the ones you list (with one-click presets for YouTube, Spotify, X, Netflix and Twitch); add or remove them while connected. [More below](#split-tunnel).
 - **Reconnects by itself** — if the tunnel drops, Wirely retries in the background (right away after sleep or when the network comes back) until it's up again.
 - **Settings that look like the app** — profiles (edit, rename, export, delete), connection, language, notifications, open at login and connect on launch, all on one page inside the window (⌘,).
 - **Tells you about updates** — once a day it checks GitHub for a new release and shows what's new in the app.
@@ -146,18 +146,46 @@ Switch to **Devices** at the top left. The router sits in the middle, every othe
 ### Split tunnel
 
 <p align="center">
-  <img src="docs/images/split-dark.png" width="620" alt="Wirely split tunnel: the map with the status card reading Split, 3 targets, and on the right the split panel set to Only selected with intranet.example.com, 10.2.2.4 and 10.8.0.0/16 in the list">
+  <img src="docs/images/split-dark.png" width="620" alt="Wirely split tunnel: the map with the status card reading Split, 3 targets, and on the right the split panel set to Split with intranet.example.com, 10.2.2.4 and 10.8.0.0/16 in the list">
+</p>
+<p align="center">
+  <img src="docs/images/split-exclude-dark.png" width="620" alt="Wirely split tunnel in exclude mode: the status card reading Tunnel, 3 excluded, and on the right the split panel set to Listed items skip the tunnel with the YouTube and Spotify presets and example.org in the list">
 </p>
 
-The button under the status on the main page (it reads *All traffic through the tunnel* or *Split, 3 targets*) opens the split panel. Choose **All traffic** (the default) or **Only selected**, then type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`) or a network (`10.8.0.0/16`). Esc closes the panel.
+The button under the status on the main page opens the split panel. It reads *All traffic through the tunnel*, *Split, 3 targets* or *Tunnel, 3 excluded*. Esc closes the panel.
+
+Choose **All traffic** (the default) or **Split**. In Split, choose what the list means: **Listed items: use the tunnel** or **Listed items: skip the tunnel**. Each direction keeps its own list, so switching back and forth loses nothing.
+
+You can type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`), a network (`10.8.0.0/16`) or a service name. Typing `youtube.com` or picking the YouTube preset adds every domain that service uses. The **Presets** chips cover YouTube, Spotify, X, Netflix and Twitch. A group row expands to show its domains.
+
+**Use the tunnel** (include):
 
 - **IP rules** become routes through the tunnel. The profile's own networks (AllowedIPs other than `0.0.0.0/0`) stay in the tunnel and show as *From the profile*.
 - **Site rules:** the service runs a small DNS forwarder on `127.0.0.1:53` and points macOS at it while you're connected. Names in your list are looked up through the profile's DNS servers inside the tunnel, and every address in the answer gets a route through the tunnel before the answer reaches the app. Every other name goes to your normal DNS servers unchanged. If another app already uses port 53, site rules are off and Wirely says so; IP rules keep working.
 - **Addresses the server doesn't accept** (not in the profile's AllowedIPs) are never routed into the tunnel, so the site doesn't hang. The panel shows them in red.
-- **Kill switch:** with split tunnel on, the kill switch blocks only the addresses in your list (and the profile's networks) if the tunnel drops; everything else keeps working. While it's blocking, names of listed sites may still be looked up through your normal DNS.
-- **Live changes:** adding or removing a rule works while connected, without reconnecting. Switching between All traffic and Only selected reconnects for a moment.
-- **Limits:** Chrome with a custom Secure DNS provider and Safari with iCloud Private Relay resolve names themselves, so site rules don't apply there (IP rules do). Sites behind a shared CDN address can pull other sites on the same address into the tunnel.
+- **Kill switch:** the kill switch blocks only the addresses in your list (and the profile's networks) if the tunnel drops; everything else keeps working. While it's blocking, names of listed sites may still be looked up through your normal DNS.
+
+**Skip the tunnel** (exclude):
+
+- Everything else goes through the tunnel exactly like All traffic.
+- Listed names are looked up with your network's own DNS servers, outside the tunnel, on sockets bound to the Wi-Fi/Ethernet interface. Their addresses get routes via your router.
+- Addresses on your local network are never rerouted.
+- Every bypass route is recorded in `/Library/Application Support/Wirely/bypass.json`, so the routes are removed after a crash or a restart.
+- If the DNS forwarder can't run, DNS stays as in full-tunnel mode (the profile's servers, through the tunnel), never on your ISP.
+- **Kill switch:** if the tunnel drops, everything is blocked except the listed items, using the addresses Wirely has already learned.
+
+**Both directions:**
+
+- **Live changes:** adding or removing a rule works while connected, without reconnecting. Switching between All traffic and Split, or between the two directions, reconnects for a moment.
 - The list is saved per profile in `~/Library/Application Support/Wirely/split.json` (`0600`).
+
+**Limits:**
+
+- Exclusions are IPv4 only.
+- There is no per-app exclusion; rules work on addresses, not programs.
+- Shared addresses: the YouTube preset also takes some other Google traffic (for example Gmail or Drive on the same addresses) out of the tunnel. The same applies to any site behind a shared CDN address, in either direction.
+- The preset domain lists are best effort. Services add and change domains, so a few may be missed.
+- Chrome with a custom Secure DNS provider and Safari with iCloud Private Relay resolve names themselves, so site rules don't apply there in either direction (IP rules do).
 
 ### Security and privacy
 
@@ -167,7 +195,7 @@ The button under the status on the main page (it reads *All traffic through the 
 - **Update check:** once a day Wirely asks GitHub's API for the latest release (`api.github.com/repos/luucas42/wirely/releases/latest`); nothing about you or your profiles is sent. Turn it off in **Settings → About → Check automatically**.
 - **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. When you trace a route, the stops' public addresses (routers) are looked up the same way. Private addresses are never looked up.
 - **Device scans stay on your local network.** Nothing about your devices is sent anywhere, and there are no internet lookups for them.
-- **Split tunnel DNS:** the forwarder listens only on `127.0.0.1`, keeps no log of queries, and sends listed names only to the profile's DNS servers, through the tunnel.
+- **Split tunnel DNS:** the forwarder listens only on `127.0.0.1`, keeps no log of queries, and sends listed names only to the profile's DNS servers, through the tunnel. In exclude mode, listed names go to your network's own DNS servers outside the tunnel; everything else goes to the profile's servers through it.
 - DNS changes are applied only to real network services (Wi-Fi, Ethernet…), never to other VPN apps' services.
 
 ### Limitations
