@@ -20,8 +20,40 @@ private func netRule(_ s: String) -> SplitRule { .network(net(s)) }
 private func bypass(_ target: String) -> String { "/sbin/route -q -n add -inet \(target) -gateway 192.168.1.1" }
 private func del(_ target: String) -> String { "/sbin/route -q -n delete -inet \(target)" }
 
+private final class ExFakeProxy: SplitDNSServing {
+    var config: SplitDNSConfig
+    let onLearn: (SplitRule, [IPAddress]) -> Void
+    var failStart = false
+    private(set) var started = false
+    private(set) var stopped = false
+    private(set) var updates: [SplitDNSConfig] = []
+    private(set) var resolved: [String] = []
+
+    init(_ config: SplitDNSConfig, _ onLearn: @escaping (SplitRule, [IPAddress]) -> Void) {
+        self.config = config
+        self.onLearn = onLearn
+    }
+    func start() throws {
+        if failStart { throw SplitDNSError.portInUse }
+        started = true
+    }
+    func stop() { stopped = true }
+    func update(_ config: SplitDNSConfig) { self.config = config; updates.append(config) }
+    func resolveNow(name: String) -> [IPAddress] { resolved.append(name); return [] }
+    func learn(_ rule: SplitRule, _ ips: [String]) { onLearn(rule, ips.map(ip)) }
+}
+
+private final class ExFakeNormalDNS: NormalDNSSource {
+    var result: [IPAddress] = [IPAddress("192.168.1.1")!]
+    func normalUpstreams(backups: [DNSBackup]) -> [IPAddress] { result }
+}
+
 private final class Env {
     let runner = FakeRunner()
+    var proxies: [ExFakeProxy] = []
+    var proxy: ExFakeProxy { proxies[proxies.count - 1] }
+    var failProxyStart = false
+    let normal = ExFakeNormalDNS()
     let store = MemoryStore()
     var launchers: [FakeLauncher] = []
     var launcher: FakeLauncher { launchers[launchers.count - 1] }
@@ -52,7 +84,13 @@ private final class Env {
             },
             resolver: FakeResolver(table: ["vpn.example.com": "203.0.113.5"]), store: store, dns: dns,
             firewall: firewall, log: { _ in }, now: { Date(timeIntervalSince1970: 1_000) },
-            makeSplitProxy: { _, _ in fatalError("no DNS proxy in exclude mode yet") },
+            makeSplitProxy: { [unowned self] cfg, hook in
+                let p = ExFakeProxy(cfg, hook)
+                p.failStart = self.failProxyStart
+                self.proxies.append(p)
+                return p
+            },
+            normalDNS: normal,
             background: { $0() },
             ledger: BypassLedger(path: ledgerPath))
     }
@@ -120,7 +158,7 @@ private final class Env {
     let s = try env.up([addr("198.51.100.7"), netRule("198.51.100.64/26"), .domain("example.com")])
     #expect(s.state == .connected)
     #expect(s.splitExclude == true)
-    #expect(s.splitDNS == false)
+    #expect(s.splitDNS == true)   // a domain rule runs the proxy
     for t in ["0.0.0.0/1", "128.0.0.0/1", "10.8.0.0/16"] {
         #expect(env.runner.ran("/sbin/route -q -n add -inet \(t) -interface utun7"), "\(t)")
     }
@@ -135,9 +173,11 @@ private final class Env {
     #expect(saved.split == ["198.51.100.7", "198.51.100.64/26", "example.com"])
 }
 
-@Test func excludeUpAppliesFullTunnelDNS() throws {
+@Test func excludeUpWithIPRulesOnlyStartsNoProxyAndAppliesFullTunnelDNS() throws {
     let env = Env()
-    try env.up([addr("198.51.100.7"), .domain("example.com")])
+    let s = try env.up([addr("198.51.100.7")])
+    #expect(env.proxies.isEmpty)
+    #expect(s.splitDNS == false)
     #expect(env.dns.applied.count == 1)
     #expect(env.dns.applied[0].allSatisfy { $0.servers == ["10.8.0.1"] })
     let saved = try #require(env.store.state)
@@ -314,4 +354,268 @@ private final class Env {
 @Test func updateSplitInExcludeModeIsRejectedWhenNotActive() throws {
     let env = Env()
     #expect(throws: TunnelError.self) { try env.manager.updateSplit([addr("198.51.100.7")]) }
+}
+
+// MARK: - DNS proxy
+
+private func dom(_ s: String) -> SplitRule { .domain(s) }
+private let example = SplitRule.domain("example.com")
+private let exampleOrg = SplitRule.domain("example.org")
+
+@Test func excludeUpMapsUpstreamsAndPointsDNSAtTheProxy() throws {
+    let env = Env()
+    let s = try env.up([example])
+    #expect(s.splitDNS == true)
+    #expect(env.proxy.started)
+    #expect(env.proxy.config.listed == [DNSUpstream(address: ip("192.168.1.1"), interface: "en0")])
+    #expect(env.proxy.config.normal == [DNSUpstream(address: ip("10.8.0.1"))])
+    #expect(env.proxy.config.tunnelIPv6 == false)
+    #expect(env.proxy.config.rules == [example])
+    #expect(env.dns.applied.count == 1)
+    #expect(env.dns.applied[0].allSatisfy { $0.servers == ["127.0.0.1"] })
+    let saved = try #require(env.store.state)
+    #expect(saved.dnsServers == [ip("127.0.0.1")])
+    #expect(saved.dnsBackups.first?.servers == ["192.168.1.1"])
+    #expect(env.proxy.resolved == ["example.com"])
+}
+
+@Test func excludeUpWithoutProfileDNSSendsTheRestToTheNormalServersUnbound() throws {
+    let env = Env()
+    try env.up([example], config: configText(dns: nil))
+    #expect(env.proxy.config.listed == [DNSUpstream(address: ip("192.168.1.1"), interface: "en0")])
+    #expect(env.proxy.config.normal == [DNSUpstream(address: ip("192.168.1.1"))])
+    #expect(env.proxy.config.normal[0].interface == nil)
+}
+
+@Test func excludeUpPutsTheNormalServersIntoThePFTable() throws {
+    let env = Env()
+    try env.up([example], killSwitch: true)
+    #expect(env.runner.ran(KillSwitchPlan.tableAdd(["192.168.1.1"]).description))
+    let plain = Env()
+    try plain.up([example])
+    #expect(!plain.runner.commands.contains { $0.description.contains("pfctl") && $0.description.contains("add") })
+}
+
+@Test func excludeUpFallsBackToFullTunnelDNSWhenPort53IsTaken() throws {
+    let env = Env()
+    env.failProxyStart = true
+    let s = try env.up([example], killSwitch: true)
+    #expect(s.state == .connected)
+    #expect(s.splitDNS == false)
+    #expect(env.dns.applied.count == 1)
+    #expect(env.dns.applied[0].allSatisfy { $0.servers == ["10.8.0.1"] })
+    let saved = try #require(env.store.state)
+    #expect(saved.dnsServers == [ip("10.8.0.1")])
+    #expect(saved.dnsBackups.first?.servers == ["192.168.1.1"])
+    #expect(!env.runner.ran(KillSwitchPlan.tableAdd(["192.168.1.1"]).description))
+}
+
+@Test func excludeUpFallsBackWithoutUsableNormalServerOrSnapshot() throws {
+    let a = Env()
+    a.normal.result = [ip("127.0.0.1")]
+    let s = try a.up([example])
+    #expect(s.splitDNS == false)
+    #expect(a.proxies.isEmpty)
+    #expect(a.dns.applied.first?.allSatisfy { $0.servers == ["10.8.0.1"] } == true)
+
+    let b = Env()
+    b.dns.failSnapshot = true
+    #expect(throws: (any Error).self) { try b.up([example]) }   // the full-tunnel DNS needs the snapshot too
+}
+
+@Test func excludeTeardownStopsTheProxyAndRestoresDNS() throws {
+    let env = Env()
+    try env.up([example])
+    env.manager.down()
+    #expect(env.proxy.stopped)
+    #expect(env.dns.servers(of: "Wi-Fi") == ["192.168.1.1"])
+}
+
+// MARK: - learning
+
+@Test func learnedAddressGetsExactlyOneRouteTableEntryAndLedgerEntry() throws {
+    let env = Env()
+    try env.up([example], killSwitch: true)
+    env.proxy.learn(example, ["198.51.100.20"])
+    env.proxy.learn(example, ["198.51.100.20"])
+    #expect(env.runner.commands.filter { $0.description == bypass("198.51.100.20") }.count == 1)
+    let add = KillSwitchPlan.tableAdd(["198.51.100.20"]).description
+    #expect(env.runner.commands.filter { $0.description == add }.count == 1)
+    #expect(env.ledgerOnDisk == ["198.51.100.20/32"])
+    let s = env.manager.status()
+    #expect(s.split?["example.com"] == SplitRuleStatus(routed: 1, rejected: 0))
+}
+
+@Test func learningWithoutKillSwitchTouchesNoTable() throws {
+    let env = Env()
+    try env.up([example])
+    env.proxy.learn(example, ["198.51.100.20"])
+    #expect(env.runner.ran(bypass("198.51.100.20")))
+    #expect(!env.runner.ran(KillSwitchPlan.tableAdd(["198.51.100.20"]).description))
+}
+
+@Test func learningNeverRoutesIPv6OrSkipListAddresses() throws {
+    let env = Env()
+    try env.up([example], killSwitch: true)
+    env.proxy.learn(example, ["2001:db8::7", "127.0.0.9", "169.254.1.1", "192.168.1.50", "203.0.113.5", "10.8.5.5"])
+    #expect(env.ledgerOnDisk.isEmpty)
+    #expect(!env.runner.commands.contains { $0.description.contains("2001:db8::7") })
+    #expect(!env.runner.commands.contains { $0.description.contains("-gateway") && $0.description != bypass("203.0.113.5") })
+    #expect(!env.runner.commands.contains { $0.description.contains("pfctl") && $0.description.contains("add") && !$0.description.contains("192.168.1.1") })
+    #expect(env.manager.status().split?["example.com"]?.routed ?? 0 == 0)
+    env.proxy.learn(example, ["198.51.100.20"])
+    #expect(env.ledgerOnDisk == ["198.51.100.20/32"])
+}
+
+@Test func downDeletesLearnedBypassRoutesToo() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7"), example])
+    env.proxy.learn(example, ["198.51.100.20", "198.51.100.21"])
+    env.runner.clearRecorded()
+    env.manager.down()
+    #expect(env.runner.ran(del("198.51.100.20")))
+    #expect(env.runner.ran(del("198.51.100.21")))
+    #expect(env.runner.ran(del("198.51.100.7")))
+    #expect(env.ledgerOnDisk.isEmpty)
+}
+
+@Test func cleanupStaleDeletesLearnedRoutesAfterACrash() throws {
+    let env = Env()
+    try env.up([example])
+    env.proxy.learn(example, ["198.51.100.20"])
+    env.runner.clearRecorded()
+    env.makeManager().cleanupStale()
+    #expect(env.runner.ran(del("198.51.100.20")))
+    #expect(env.ledgerOnDisk.isEmpty)
+}
+
+@Test func holdKeepsLearnedAddressesAndNormalDNSInTheTable() throws {
+    let env = Env()
+    try env.up([example], killSwitch: true)
+    env.proxy.learn(example, ["198.51.100.20"])
+    env.launcher.simulateExit()
+    // The restored system DNS (the normal servers) must pass too, or listed names can't be looked up.
+    #expect(env.firewall.current?.contains("table <wirely_split> persist { 198.51.100.20, 192.168.1.1 }") == true)
+    #expect(env.ledgerOnDisk.isEmpty)
+}
+
+// MARK: - network change
+
+private func moveToSecondNetwork(_ env: Env) {
+    env.runner.script(NetPlan.netstatCommand(.v4),
+                      stdout: "Destination Gateway Flags Netif Expire\ndefault 192.168.2.1 UGScg en1\n")
+    env.runner.script(NetPlan.ifconfigShow("en1"),
+                      stdout: "en1: flags=8863<UP> mtu 1500\n\tinet 192.168.2.20 netmask 0xffffff00 broadcast 192.168.2.255\n")
+    env.normal.result = [ip("192.168.2.1")]
+}
+
+@Test func networkChangeRepointsLedgerRoutesAndSwapsUpstreamsAndPFEntries() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7"), example], killSwitch: true)
+    env.proxy.learn(example, ["198.51.100.20"])
+    moveToSecondNetwork(env)
+    env.runner.clearRecorded()
+    env.manager.networkChanged()
+    for target in ["198.51.100.7", "198.51.100.20"] {
+        let d = try #require(env.runner.index(of: del(target)), "\(target)")
+        let a = try #require(env.runner.index(of: "/sbin/route -q -n add -inet \(target) -gateway 192.168.2.1"), "\(target)")
+        #expect(d < a)
+        #expect(!env.runner.ran(bypass(target)))
+    }
+    #expect(env.ledgerOnDisk.sorted() == ["198.51.100.20/32", "198.51.100.7/32"])
+    let cfg = try #require(env.proxy.updates.last)
+    #expect(cfg.listed == [DNSUpstream(address: ip("192.168.2.1"), interface: "en1")])
+    #expect(cfg.normal == [DNSUpstream(address: ip("10.8.0.1"))])
+    #expect(env.runner.ran(KillSwitchPlan.tableDelete(["192.168.1.1"]).description))
+    #expect(env.runner.ran(KillSwitchPlan.tableAdd(["192.168.2.1"]).description))
+    // The new connected subnet now keeps its own addresses off the bypass list.
+    env.proxy.learn(example, ["192.168.2.77"])
+    #expect(!env.runner.ran("/sbin/route -q -n add -inet 192.168.2.77 -gateway 192.168.2.1"))
+    env.proxy.learn(example, ["198.51.100.21"])
+    #expect(env.runner.ran("/sbin/route -q -n add -inet 198.51.100.21 -gateway 192.168.2.1"))
+}
+
+@Test func networkChangeDropsLedgerRoutesInsideTheNewConnectedSubnet() throws {
+    let env = Env()
+    try env.up([example])
+    env.proxy.learn(example, ["192.168.2.77", "198.51.100.20"])   // 192.168.2.77 is routed on the first network
+    moveToSecondNetwork(env)
+    env.runner.clearRecorded()
+    env.manager.networkChanged()
+    #expect(env.runner.ran(del("192.168.2.77")))
+    #expect(!env.runner.ran("/sbin/route -q -n add -inet 192.168.2.77 -gateway 192.168.2.1"))
+    #expect(env.ledgerOnDisk == ["198.51.100.20/32"])
+}
+
+@Test func networkChangeWithoutProxyStillRepointsStaticRoutes() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7")])
+    moveToSecondNetwork(env)
+    env.manager.networkChanged()
+    #expect(env.runner.ran("/sbin/route -q -n add -inet 198.51.100.7 -gateway 192.168.2.1"))
+    #expect(env.proxies.isEmpty)
+}
+
+// MARK: - live changes with domains
+
+@Test func removingADomainDeletesOnlyWhatItOwned() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7"), example, exampleOrg], killSwitch: true)
+    env.proxy.learn(example, ["198.51.100.20", "198.51.100.21", "198.51.100.7"])
+    env.proxy.learn(exampleOrg, ["198.51.100.21", "198.51.100.22"])
+    env.runner.clearRecorded()
+    let s = try env.manager.updateSplit([addr("198.51.100.7"), exampleOrg])
+    #expect(env.runner.ran(del("198.51.100.20")))
+    #expect(!env.runner.ran(del("198.51.100.21")))   // org still owns it
+    #expect(!env.runner.ran(del("198.51.100.22")))
+    #expect(!env.runner.ran(del("198.51.100.7")))    // a static rule owns it
+    #expect(env.ledgerOnDisk.sorted() == ["198.51.100.21/32", "198.51.100.22/32", "198.51.100.7/32"])
+    #expect(env.runner.ran(KillSwitchPlan.tableDelete(["198.51.100.20"]).description))
+    #expect(env.proxy.updates.last?.rules == [addr("198.51.100.7"), exampleOrg])
+    #expect(s.split?["example.com"] == nil)
+    #expect(s.split?["example.org"]?.routed == 2)
+    #expect(env.runner.commands.contains { NetPlan.flushDNSCache.contains($0) })
+    let saved = try #require(env.store.state)
+    #expect(Set(saved.killSwitch?.splitTable ?? []) == ["198.51.100.7", "198.51.100.21", "198.51.100.22"])
+}
+
+@Test func addingADomainPreResolvesIt() throws {
+    let env = Env()
+    try env.up([example])
+    _ = try env.manager.updateSplit([example, exampleOrg])
+    #expect(env.proxy.resolved == ["example.com", "example.org"])
+    #expect(env.proxy.updates.last?.rules == [example, exampleOrg])
+}
+
+@Test func removingTheLastDomainStopsTheProxyAndRestoresFullTunnelDNS() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7"), example], killSwitch: true)
+    env.proxy.learn(example, ["198.51.100.20"])
+    env.runner.clearRecorded()
+    let s = try env.manager.updateSplit([addr("198.51.100.7")])
+    #expect(env.proxy.stopped)
+    #expect(s.splitDNS == false)
+    #expect(env.dns.applied.last?.allSatisfy { $0.servers == ["10.8.0.1"] } == true)
+    #expect(env.runner.ran(del("198.51.100.20")))
+    #expect(env.runner.ran(KillSwitchPlan.tableDelete(["192.168.1.1", "198.51.100.20"]).description))
+    let saved = try #require(env.store.state)
+    #expect(saved.dnsServers == [ip("10.8.0.1")])
+    #expect(saved.dnsBackups.first?.servers == ["192.168.1.1"])   // teardown still restores the original
+    env.manager.down()
+    #expect(env.dns.servers(of: "Wi-Fi") == ["192.168.1.1"])
+}
+
+@Test func addingTheFirstDomainLiveStartsTheProxyAndKeepsTheOriginalBackup() throws {
+    let env = Env()
+    try env.up([addr("198.51.100.7")])
+    #expect(env.proxies.isEmpty)
+    let s = try env.manager.updateSplit([addr("198.51.100.7"), example])
+    #expect(env.proxies.count == 1)
+    #expect(s.splitDNS == true)
+    #expect(env.dns.applied.last?.allSatisfy { $0.servers == ["127.0.0.1"] } == true)
+    let saved = try #require(env.store.state)
+    #expect(saved.dnsBackups.first?.servers == ["192.168.1.1"])   // not our own full-tunnel DNS
+    #expect(saved.dnsServers == [ip("127.0.0.1")])
+    env.manager.down()
+    #expect(env.dns.servers(of: "Wi-Fi") == ["192.168.1.1"])
 }
