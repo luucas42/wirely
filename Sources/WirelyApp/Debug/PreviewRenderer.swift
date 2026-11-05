@@ -497,6 +497,18 @@ enum PreviewRenderer {
         render(Scenario(label: "release-notes", update: release, sheet: true), scheme: .dark, now: now, into: directory)
         render(Scenario(label: "update-sheet-downloading", update: release, download: .downloading(version: "1.2.0", fraction: 0.45),
                         sheet: true), scheme: .dark, now: now, into: directory)
+        var sheetFailed = Scenario(label: "update-sheet-failed", update: release, download: .failed(version: "1.2.0", .network),
+                                   sheet: true)
+        render(sheetFailed, scheme: .dark, now: now, into: directory)
+        sheetFailed.label = "update-sheet-failed-tr"
+        sheetFailed.language = .tr
+        render(sheetFailed, scheme: .dark, now: now, into: directory)
+        for s in scenarios where s.label.hasPrefix("settings-about-downloading") || s.label.hasPrefix("settings-about-update-") {
+            var t = s
+            t.label += "-tr"
+            t.language = .tr
+            render(t, scheme: .dark, now: now, into: directory)
+        }
 
         // Debug: land-mask sanity checks (whole world; Istanbul + Frankfurt framing).
         let l10n = L10n(fixed: .en)

@@ -48,14 +48,16 @@ struct ReleaseNotesSheet: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             UpdateDownloadMessage(release: release)
-            Spacer(minLength: 0)
-            if case .failed = downloader.state(for: release) {
-                OutlinePill(action: { NSWorkspace.shared.open(release.pageURL) }) { Text(l10n(.releasePage)) }
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                if case .failed = downloader.state(for: release) {
+                    OutlinePill(action: { NSWorkspace.shared.open(release.pageURL) }) { Text(l10n(.releasePage)) }
+                }
+                OutlinePill(action: { dismiss() }) { Text(l10n(.close)) }
+                UpdateDownloadButton(release: release)
             }
-            OutlinePill(action: { dismiss() }) { Text(l10n(.close)) }
-            UpdateDownloadButton(release: release)
         }
     }
 
