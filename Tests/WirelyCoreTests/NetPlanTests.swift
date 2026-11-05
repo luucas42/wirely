@@ -154,3 +154,54 @@ private func ip(_ s: String) -> IPAddress { IPAddress(s)! }
     #expect(NetPlan.parseRouteGetInterface(sample) == "en0")
     #expect(NetPlan.parseRouteGetInterface("route: writing to routing socket: not in table") == nil)
 }
+
+// MARK: split exclude
+
+private let physical = DefaultRoutes(v4Gateway: "192.168.1.1", v4Interface: "en0", v6Gateway: nil, v6Interface: nil)
+
+@Test func bypassRouteHostHasNoPrefix() {
+    #expect(NetPlan.bypassRouteAdd(net("203.0.113.9/32"), routes: physical)
+            == NetCommand("/sbin/route", ["-q", "-n", "add", "-inet", "203.0.113.9", "-gateway", "192.168.1.1"]))
+}
+
+@Test func bypassRouteNetworkKeepsPrefix() {
+    #expect(NetPlan.bypassRouteAdd(net("198.51.100.0/24"), routes: physical)
+            == NetCommand("/sbin/route", ["-q", "-n", "add", "-inet", "198.51.100.0/24", "-gateway", "192.168.1.1"]))
+}
+
+@Test func bypassRouteFallsBackToInterfaceThenBlackhole() {
+    let ifaceOnly = DefaultRoutes(v4Gateway: nil, v4Interface: "en0", v6Gateway: nil, v6Interface: nil)
+    #expect(NetPlan.bypassRouteAdd(net("203.0.113.9/32"), routes: ifaceOnly)
+            == NetCommand("/sbin/route", ["-q", "-n", "add", "-inet", "203.0.113.9", "-interface", "en0"]))
+    let none = DefaultRoutes(v4Gateway: nil, v4Interface: nil, v6Gateway: nil, v6Interface: nil)
+    #expect(NetPlan.bypassRouteAdd(net("203.0.113.9/32"), routes: none)
+            == NetCommand("/sbin/route", ["-q", "-n", "add", "-inet", "203.0.113.9", "127.0.0.1", "-blackhole"]))
+    #expect(NetPlan.bypassRouteAdd(net("2001:db8::1/128"), routes: none)
+            == NetCommand("/sbin/route", ["-q", "-n", "add", "-inet6", "2001:db8::1", "::1", "-blackhole"]))
+}
+
+@Test func parseIPv4SubnetsMasksHostBits() {
+    let out = """
+    en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
+    \toptions=6460<TSO4,TSO6,CHANNEL_IO,PARTIAL_CSUM,ZEROINVERT_CSUM>
+    \tether aa:bb:cc:dd:ee:ff
+    \tinet6 fe80::1%en0 prefixlen 64 secured scopeid 0xb
+    \tinet 192.168.1.23 netmask 0xffffff00 broadcast 192.168.1.255
+    \tinet 10.2.2.4 netmask 0xfffff000 broadcast 10.2.15.255
+    \tnd6 options=201<PERFORMNUD,DAD>
+    """
+    #expect(NetPlan.parseIPv4Subnets(ifconfig: out) == [net("192.168.1.0/24"), net("10.2.0.0/20")])
+}
+
+@Test func parseIPv4SubnetsSkipsPointToPointAndGarbage() {
+    let out = """
+    \tinet 10.8.0.2 --> 10.8.0.1 netmask 0xffffffff
+    \tinet 192.168.1.5 netmask 0xff00ff00
+    \tinet 192.168.1.5 netmask zzz
+    \tinet 192.168.1.5
+    \tinet 203.0.113.7 netmask 0xffffffff
+    \tinet 203.0.113.7 netmask 0xffffffff
+    """
+    #expect(NetPlan.parseIPv4Subnets(ifconfig: out) == [net("203.0.113.7/32")])
+    #expect(NetPlan.parseIPv4Subnets(ifconfig: "").isEmpty)
+}

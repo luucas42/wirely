@@ -105,3 +105,40 @@ import Testing
     #expect(KillSwitchPlan.tableDelete(["2001:db8::1"]) == NetCommand(
         "/sbin/pfctl", ["-a", "com.apple/250.Wirely", "-t", "wirely_split", "-T", "delete", "2001:db8::1"]))
 }
+
+@Test func excludeRulesTableFirstAndPassBeforeBlock() {
+    let rules = KillSwitchPlan.excludeRules(iface: "utun7", endpoints: [Endpoint(host: "203.0.113.5", port: 51820),
+                                                                        Endpoint(host: "vpn.example.com", port: 1)],
+                                            allowLAN: false,
+                                            table: ["198.51.100.9", "10.8.0.0/16", "2001:db8::1", "198.51.100.9", "bad;entry"])
+    #expect(rules == """
+    # Wirely kill switch (generated)
+    table <wirely_split> persist { 198.51.100.9, 10.8.0.0/16, 2001:db8::1 }
+    pass quick on lo0 all flags any keep state
+    pass quick on utun7 all flags any keep state
+    pass out quick inet proto udp from any to 203.0.113.5 port 51820 keep state
+    pass out quick inet proto udp from any to 203.0.113.5 port 33434:34000 keep state
+    pass out quick inet proto udp from any port 68 to any port 67 keep state
+    pass in quick inet proto udp from any port 67 to any port 68 keep state
+    pass in quick inet proto icmp from any to any icmp-type timex
+    pass in quick inet proto icmp from any to any icmp-type unreach
+    pass out quick to <wirely_split> flags any keep state
+    block drop quick all
+
+    """)
+}
+
+@Test func excludeRulesEmptyTableHeldTunnelAndLAN() {
+    let held = KillSwitchPlan.excludeRules(iface: nil, endpoints: [], allowLAN: true, table: [])
+    #expect(held.contains("\ntable <wirely_split> persist\n"))
+    #expect(!held.contains("persist {"))
+    #expect(!held.contains("utun"))
+    // Everything `rules` produces is still there, in order; only the table line and the pass rule are added.
+    let base = KillSwitchPlan.rules(iface: nil, endpoints: [], allowLAN: true).split(separator: "\n").map(String.init)
+    let lines = held.split(separator: "\n").map(String.init)
+    #expect(lines.count == base.count + 2)
+    #expect(lines.filter { $0 != "table <wirely_split> persist" && $0 != "pass out quick to <wirely_split> flags any keep state" } == base)
+    #expect(lines[lines.count - 2] == "pass out quick to <wirely_split> flags any keep state")
+    #expect(lines.last == "block drop quick all")
+    #expect(held.contains("pass out quick inet from any to { 10.0.0.0/8"))
+}

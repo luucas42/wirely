@@ -3,7 +3,7 @@ import Foundation
 public enum HelperConstants {
     public static let socketPath = "/var/run/wirely-helper.sock"
     public static let label = "io.github.luucas42.wirely.helper"
-    public static let helperVersion = 8
+    public static let helperVersion = 9
     public static let helperInstallPath = "/Library/PrivilegedHelperTools/io.github.luucas42.wirely.helper"
     public static let wireguardGoInstallPath = "/Library/PrivilegedHelperTools/io.github.luucas42.wirely.wireguard-go"
     public static let plistPath = "/Library/LaunchDaemons/io.github.luucas42.wirely.helper.plist"
@@ -32,12 +32,16 @@ public struct TunnelStatus: Equatable, Codable {
     public var split: [String: SplitRuleStatus]?
     /// Split tunnel only: the local DNS proxy is running (false = site rules inactive, e.g. port 53 taken).
     public var splitDNS: Bool?
+    /// Split tunnel only: true = "everything except the list" (listed items use the normal connection),
+    /// false = "only selected". nil in full mode and from older helpers.
+    public var splitExclude: Bool?
 
     public init(state: TunnelState, tunnelName: String? = nil, interface: String? = nil,
                 connectedAt: Date? = nil, lastHandshake: Date? = nil,
                 rxBytes: UInt64 = 0, txBytes: UInt64 = 0,
                 endpoint: String? = nil, message: String? = nil, ignoredKeys: [String] = [],
-                killSwitch: Bool? = nil, split: [String: SplitRuleStatus]? = nil, splitDNS: Bool? = nil) {
+                killSwitch: Bool? = nil, split: [String: SplitRuleStatus]? = nil, splitDNS: Bool? = nil,
+                splitExclude: Bool? = nil) {
         self.state = state
         self.tunnelName = tunnelName
         self.interface = interface
@@ -51,6 +55,7 @@ public struct TunnelStatus: Equatable, Codable {
         self.killSwitch = killSwitch
         self.split = split
         self.splitDNS = splitDNS
+        self.splitExclude = splitExclude
     }
 
     /// Traffic is blocked by the kill switch after the tunnel dropped.
@@ -84,9 +89,12 @@ public struct HelperRequest: Codable, Equatable {
     /// `up` and `split`: split-tunnel rule texts (see `SplitRule.text`). nil on `up` = full tunnel;
     /// non-nil, even empty = split mode. On `split` it replaces the running tunnel's rules.
     public var split: [String]?
+    /// `up` only, with `split`: the list is excluded from the tunnel instead of being the only thing in it.
+    /// nil/false = "only selected".
+    public var splitExclude: Bool?
     public init(command: HelperCommand, tunnelName: String? = nil, config: String? = nil,
                 killSwitch: Bool? = nil, allowLAN: Bool? = nil, traceTarget: String? = nil,
-                split: [String]? = nil) {
+                split: [String]? = nil, splitExclude: Bool? = nil) {
         self.command = command
         self.tunnelName = tunnelName
         self.config = config
@@ -94,6 +102,7 @@ public struct HelperRequest: Codable, Equatable {
         self.allowLAN = allowLAN
         self.traceTarget = traceTarget
         self.split = split
+        self.splitExclude = splitExclude
     }
 }
 

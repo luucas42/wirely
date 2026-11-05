@@ -64,14 +64,19 @@ public struct KillSwitchRecord: Equatable, Codable {
     public var endpoints: [Endpoint]
     /// Split tunnel: addresses/networks the rules block (the `wirely_split` table). nil = full block.
     public var splitTable: [String]?
-    public init(token: String?, allowLAN: Bool, endpoints: [Endpoint], splitTable: [String]? = nil) {
+    /// Split tunnel: the table holds destinations that may leave outside the tunnel (exclude mode) instead
+    /// of destinations that are blocked. nil = include or full.
+    public var splitExclude: Bool?
+    public init(token: String?, allowLAN: Bool, endpoints: [Endpoint], splitTable: [String]? = nil,
+                splitExclude: Bool? = nil) {
         self.token = token
         self.allowLAN = allowLAN
         self.endpoints = endpoints
         self.splitTable = splitTable
+        self.splitExclude = splitExclude
     }
 
-    private enum CodingKeys: String, CodingKey { case token, allowLAN, endpoints, splitTable }
+    private enum CodingKeys: String, CodingKey { case token, allowLAN, endpoints, splitTable, splitExclude }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -79,6 +84,7 @@ public struct KillSwitchRecord: Equatable, Codable {
         allowLAN = try c.decode(Bool.self, forKey: .allowLAN)
         endpoints = try c.decode([Endpoint].self, forKey: .endpoints)
         splitTable = try c.decodeIfPresent([String].self, forKey: .splitTable)
+        splitExclude = try c.decodeIfPresent(Bool.self, forKey: .splitExclude)
     }
 }
 

@@ -510,3 +510,48 @@ private func makeProxy(_ cfg: SplitDNSConfig, learned: Learned = Learned(), time
         #expect(up.hits.filter { $0.type == 28 }.count == 1)
     }
 }
+
+// MARK: bound upstreams
+
+extension SplitDNSProxyTests {
+    private func tcpOnce(_ port: UInt16, _ query: [UInt8]) -> [UInt8]? {
+        let fd = tcpConnect(port: port)
+        defer { close(fd) }
+        return tcpQuery(fd, query)
+    }
+
+    private func boundConfig(_ fake: FakeDNS, interface: String?) -> SplitDNSConfig {
+        var up = fake.upstream
+        up.interface = interface
+        return SplitDNSConfig(rules: [example], listed: [up], normal: [up], tunnelIPv6: false, allowLoopbackUpstreams: true)
+    }
+
+    @Test func upstreamBoundToLoopbackInterfaceStillAnswers() throws {
+        let fake = try FakeDNS(handler: answers(["198.51.100.9"]))
+        defer { fake.stop() }
+        let proxy = try makeProxy(boundConfig(fake, interface: "lo0"))
+        defer { proxy.stop() }
+        let query = q("example.com")
+        let udp = try #require(udpExchange(port: proxy.boundPort, query))
+        #expect(udp == canned(query, ["198.51.100.9"]))
+        let tq = q("example.com")
+        #expect(tcpOnce(proxy.boundPort, tq) == canned(tq, ["198.51.100.9"]))
+        #expect(fake.hits.contains { !$0.tcp } && fake.hits.contains { $0.tcp })
+    }
+
+    @Test func unknownInterfaceNameFallsBackToUnbound() throws {
+        let fake = try FakeDNS(handler: answers(["198.51.100.9"]))
+        defer { fake.stop() }
+        let proxy = try makeProxy(boundConfig(fake, interface: "nonexistent99"))
+        defer { proxy.stop() }
+        let query = q("example.com")
+        #expect(try #require(udpExchange(port: proxy.boundPort, query)) == canned(query, ["198.51.100.9"]))
+        let tq = q("example.com")
+        #expect(tcpOnce(proxy.boundPort, tq) == canned(tq, ["198.51.100.9"]))
+    }
+
+    @Test func upstreamInterfaceDefaultsToNil() {
+        #expect(DNSUpstream(address: IPAddress("198.51.100.1")!).interface == nil)
+        #expect(DNSUpstream(address: IPAddress("198.51.100.1")!, port: 53, interface: "en0").interface == "en0")
+    }
+}

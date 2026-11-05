@@ -5,9 +5,13 @@ import WirelyCore
 public struct DNSUpstream: Equatable {
     public var address: IPAddress
     public var port: UInt16
-    public init(address: IPAddress, port: UInt16 = 53) {
+    /// Bind this upstream's sockets to the named interface (`IP_BOUND_IF`), so queries leave through it
+    /// even when the routing table says otherwise. nil, or a name the system doesn't know = unbound.
+    public var interface: String?
+    public init(address: IPAddress, port: UInt16 = 53, interface: String? = nil) {
         self.address = address
         self.port = port
+        self.interface = interface
     }
 }
 
@@ -276,6 +280,7 @@ public final class SplitDNSProxy {
         let fd = socket(server.address.family == .v4 ? AF_INET : AF_INET6, SOCK_DGRAM, 0)
         guard fd >= 0 else { return nil }
         defer { close(fd) }
+        Self.bindToInterface(fd, server)
         var (ss, len) = Self.makeSockAddr(server.address, port: server.port)
         let rc = withUnsafePointer(to: &ss) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, len) }
@@ -298,6 +303,7 @@ public final class SplitDNSProxy {
         var one: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
+        Self.bindToInterface(fd, server)
         let deadline = Date().addingTimeInterval(timeout)
         var (ss, len) = Self.makeSockAddr(server.address, port: server.port)
         let rc = withUnsafePointer(to: &ss) {
@@ -361,6 +367,18 @@ public final class SplitDNSProxy {
             if r > 0 { return true }
             if r < 0 && errno != EINTR { return false }
             if deadline == nil { return false }   // listeners re-check their stop flag
+        }
+    }
+
+    /// Pins an upstream socket to its interface. Index 0 (unknown name) or a failing setsockopt leaves it unbound.
+    private static func bindToInterface(_ fd: Int32, _ server: DNSUpstream) {
+        guard let name = server.interface else { return }
+        var index = if_nametoindex(name)
+        guard index != 0 else { return }
+        if server.address.family == .v4 {
+            setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, &index, socklen_t(MemoryLayout<UInt32>.size))
+        } else {
+            setsockopt(fd, IPPROTO_IPV6, IPV6_BOUND_IF, &index, socklen_t(MemoryLayout<UInt32>.size))
         }
     }
 

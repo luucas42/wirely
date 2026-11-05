@@ -201,6 +201,47 @@ public enum NetPlan {
         NetCommand(route, ["-q", "-n", "add", ip.family == .v4 ? "-inet" : "-inet6", ip.description, "-interface", iface])
     }
 
+    // MARK: Split tunnel, exclude mode
+
+    /// Route for one excluded address/network through the physical default gateway (same fallback as
+    /// `endpointRouteAdd`). A host address is written without a prefix length.
+    public static func bypassRouteAdd(_ net: IPNetwork, routes: DefaultRoutes) -> NetCommand {
+        let v4 = net.address.family == .v4
+        let family = v4 ? "-inet" : "-inet6"
+        let gateway = v4 ? routes.v4Gateway : routes.v6Gateway
+        let iface = v4 ? routes.v4Interface : routes.v6Interface
+        let isHost = net.prefixLength == (v4 ? 32 : 128)
+        let base = ["-q", "-n", "add", family, isHost ? net.address.description : net.description]
+        if let gateway {
+            return NetCommand(route, base + ["-gateway", gateway])
+        }
+        if let iface {
+            return NetCommand(route, base + ["-interface", iface])
+        }
+        return NetCommand(route, base + [v4 ? "127.0.0.1" : "::1", "-blackhole"])
+    }
+
+    /// Directly connected IPv4 networks from `ifconfig <iface>` output (`inet <addr> netmask 0x<hex> ...`).
+    /// Host bits are masked; point-to-point (`-->`) lines are skipped.
+    public static func parseIPv4Subnets(ifconfig: String) -> [IPNetwork] {
+        var out: [IPNetwork] = []
+        for line in ifconfig.split(whereSeparator: \.isNewline) {
+            let t = line.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+            guard t.count >= 4, t[0] == "inet", !t.contains("-->"), t[2] == "netmask",
+                  let addr = IPAddress(t[1]), addr.family == .v4,
+                  t[3].hasPrefix("0x"), let mask = UInt32(t[3].dropFirst(2), radix: 16) else { continue }
+            // Only contiguous masks (a run of ones from the top).
+            let ones = mask.nonzeroBitCount
+            guard mask == (ones == 0 ? 0 : UInt32.max << UInt32(32 - ones)) else { continue }
+            var bytes = addr.bytes
+            for i in 0..<4 { bytes[i] &= UInt8(truncatingIfNeeded: mask >> UInt32(24 - 8 * i)) }
+            guard let masked = IPAddress(bytes.map(String.init).joined(separator: ".")) else { continue }
+            let net = IPNetwork(address: masked, prefixLength: ones)
+            if !out.contains(net) { out.append(net) }
+        }
+        return out
+    }
+
     public static func hostRouteDelete(_ ip: IPAddress) -> NetCommand {
         NetCommand(route, ["-q", "-n", "delete", ip.family == .v4 ? "-inet" : "-inet6", ip.description])
     }

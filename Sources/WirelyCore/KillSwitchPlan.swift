@@ -91,6 +91,24 @@ public enum KillSwitchPlan {
         return lines.joined(separator: "\n") + "\n"
     }
 
+    /// Exclude-mode rules: the full kill-switch `rules(...)` plus the `wirely_split` table, whose destinations
+    /// may leave outside the tunnel (`pass out quick to <wirely_split>` right before the final block).
+    /// - Parameter table: IP addresses / CIDR networks; anything else is skipped.
+    public static func excludeRules(iface: String?, endpoints: [Endpoint], allowLAN: Bool, table: [String]) -> String {
+        var seen = Set<String>()
+        let entries = table.filter { IPNetwork($0) != nil && seen.insert($0).inserted }
+        var lines = rules(iface: iface, endpoints: endpoints, allowLAN: allowLAN)
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        if lines.last == "" { lines.removeLast() }
+        let tableLine = entries.isEmpty ? "table <\(splitTable)> persist"
+                                        : "table <\(splitTable)> persist { \(entries.joined(separator: ", ")) }"
+        // After the header comment: the table must be declared before a rule uses it.
+        lines.insert(tableLine, at: 1)
+        let block = lines.lastIndex(of: "block drop quick all") ?? lines.endIndex
+        lines.insert("pass out quick to <\(splitTable)> flags any keep state", at: block)
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     /// `addrs` must not be empty (pfctl rejects an empty list).
     public static func tableAdd(_ addrs: [String]) -> NetCommand {
         NetCommand(pfctl, ["-a", anchor, "-t", splitTable, "-T", "add"] + addrs)

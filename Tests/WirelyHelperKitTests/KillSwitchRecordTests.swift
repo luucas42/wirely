@@ -25,3 +25,12 @@ import Foundation
     #expect(state.killSwitch?.splitTable == nil)
     #expect(state.killSwitch?.allowLAN == true)
 }
+
+@Test func killSwitchRecordSplitExcludeRoundTripsAndOldRecordsDecode() throws {
+    let old = #"{"token":"42","allowLAN":true,"endpoints":[],"splitTable":["198.51.100.9"]}"#
+    let oldRecord = try JSONDecoder().decode(KillSwitchRecord.self, from: Data(old.utf8))
+    #expect(oldRecord.splitExclude == nil)
+    let record = KillSwitchRecord(token: nil, allowLAN: false, endpoints: [], splitTable: ["198.51.100.9"], splitExclude: true)
+    let back = try JSONDecoder().decode(KillSwitchRecord.self, from: JSONEncoder().encode(record))
+    #expect(back == record && back.splitExclude == true)
+}

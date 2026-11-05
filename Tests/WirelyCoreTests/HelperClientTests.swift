@@ -102,7 +102,7 @@ private func tempSocketPath() -> String {
                                   trace: result)
     let backResponse = try JSONDecoder().decode(HelperResponse.self, from: JSONEncoder().encode(response))
     #expect(backResponse == response && backResponse.trace == result)
-    #expect(HelperConstants.helperVersion == 8)
+    #expect(HelperConstants.helperVersion == 9)
 }
 
 @Test func traceFieldsAreOptionalWhenDecoding() throws {
@@ -113,7 +113,7 @@ private func tempSocketPath() -> String {
 }
 
 @Test func splitProtocolFieldsAreOptionalAndRoundTrip() throws {
-    #expect(HelperConstants.helperVersion == 8)
+    #expect(HelperConstants.helperVersion == 9)
     // Old helper/app JSON without the new fields still decodes.
     let oldRequest = try JSONDecoder().decode(HelperRequest.self, from: Data(#"{"command":"up","tunnelName":"home","config":"x"}"#.utf8))
     #expect(oldRequest.split == nil)
@@ -132,4 +132,20 @@ private func tempSocketPath() -> String {
     let back = try JSONDecoder().decode(TunnelStatus.self, from: JSONEncoder().encode(status))
     #expect(back == status)
     #expect(back.split?["example.com"]?.rejected == 1)
+}
+
+@Test func splitExcludeFieldsAreOptionalAndRoundTrip() throws {
+    let oldRequest = try JSONDecoder().decode(HelperRequest.self, from: Data(
+        #"{"command":"up","tunnelName":"home","config":"x","split":["example.com"]}"#.utf8))
+    #expect(oldRequest.splitExclude == nil)
+    let oldStatus = try JSONDecoder().decode(TunnelStatus.self, from: Data(
+        #"{"state":"connected","rxBytes":1,"txBytes":2,"ignoredKeys":[],"split":{},"splitDNS":true}"#.utf8))
+    #expect(oldStatus.splitExclude == nil)
+
+    let request = HelperRequest(command: .up, tunnelName: "home", config: "x", split: ["example.org"], splitExclude: true)
+    let backRequest = try JSONDecoder().decode(HelperRequest.self, from: JSONEncoder().encode(request))
+    #expect(backRequest == request && backRequest.splitExclude == true)
+    let status = TunnelStatus(state: .connected, split: [:], splitDNS: false, splitExclude: true)
+    let backStatus = try JSONDecoder().decode(TunnelStatus.self, from: JSONEncoder().encode(status))
+    #expect(backStatus == status && backStatus.splitExclude == true)
 }
