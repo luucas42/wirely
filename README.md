@@ -43,7 +43,7 @@ It runs the same userspace implementation the official app uses ([wireguard-go](
 - **Split tunnel** — per profile, either send only the sites and IPs you pick through the tunnel, or send everything through it except the ones you list (with one-click presets for YouTube, Spotify, X, Netflix and Twitch); add or remove them while connected. [More below](#split-tunnel).
 - **Reconnects by itself** — if the tunnel drops, Wirely retries in the background (right away after sleep or when the network comes back) until it's up again.
 - **Settings that look like the app** — profiles (edit, rename, export, delete), connection, language, notifications, open at login and connect on launch, all on one page inside the window (⌘,).
-- **Tells you about updates** — once a day it checks GitHub for a new release and shows what's new in the app.
+- **Tells you about updates** — once a day it checks GitHub for a new release, shows what's new and downloads it inside the app, checked against GitHub's SHA-256.
 - **English and Türkçe**, switchable instantly in Settings. Light and dark mode.
 
 <p align="center">
@@ -75,10 +75,10 @@ Requirements: a Mac with **Apple Silicon** running **macOS 13 or later**, and an
 
 ### Update
 
-From 1.2 on, Wirely tells you when a new version is out (**Settings → About** shows what's new and a **Download** button).
+From 1.2 on, Wirely tells you when a new version is out (**Settings → About** shows what's new and a **Download** button). From 1.6.1 on, **Download** fetches the DMG inside Wirely (no browser), keeps it only if its SHA-256 matches the one GitHub publishes, saves it to **Downloads** and opens it.
 
-1. Quit Wirely (menu bar icon → **Quit**), download the new DMG and drag **Wirely** to **Applications**, choosing **Replace**. Your profiles and settings are kept.
-2. Open it. macOS may ask you to approve it again, as in *First launch*.
+1. Quit Wirely (menu bar icon → **Quit**; you stay connected), then drag **Wirely** from the DMG to **Applications**, choosing **Replace**. Your profiles and settings are kept.
+2. Open it. A DMG downloaded inside Wirely opens without the first-launch prompt; one downloaded with a browser may need approving again, as in *First launch*.
 3. If the app says *A service update is required*, click **Update** and enter your Mac password. This restarts the service, so an active tunnel is disconnected; connect again afterwards.
 
 ### Uninstall
@@ -194,6 +194,7 @@ You can type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`), a
 - Every system command is run with an argument list, never through a shell. `PreUp` / `PostUp` / `PreDown` / `PostDown` lines in profiles are **ignored**, not executed.
 - Profiles are stored with `0600` permissions. Private keys never appear in the helper log (`/Library/Logs/Wirely/helper.log`).
 - **Update check:** once a day Wirely asks GitHub's API for the latest release (`api.github.com/repos/luucas42/wirely/releases/latest`); nothing about you or your profiles is sent. Turn it off in **Settings → About → Check automatically**.
+- **In-app download:** **Download** fetches the DMG from GitHub over HTTPS and keeps it only if its SHA-256 matches the digest GitHub publishes for that file (or, for older releases, the one in the release notes); otherwise it is deleted and nothing opens. Because it was verified, it is saved without macOS's quarantine flag, so the app you drag out of it opens without the *could not verify* prompt.
 - **Location lookups:** your own city comes from the system time zone — nothing is sent anywhere. The *server's* city is looked up once per server IP via [ipwho.is](https://ipwho.is) (fallback [ipinfo.io](https://ipinfo.io)) and cached for 30 days. When you trace a route, the stops' public addresses (routers) are looked up the same way. Private addresses are never looked up.
 - **Device scans stay on your local network.** Nothing about your devices is sent anywhere, and there are no internet lookups for them.
 - **Split tunnel DNS:** the forwarder listens only on `127.0.0.1`, keeps no log of queries, and sends listed names only to the profile's DNS servers, through the tunnel. In exclude mode, listed names go to your network's own DNS servers outside the tunnel; everything else goes to the profile's servers through it.
@@ -267,8 +268,8 @@ Wirely is released under the [MIT License](LICENSE).
 
 **Otomatik yeniden bağlanma:** Tünel düşerse Wirely arka planda yeniden dener (uykudan uyanınca ya da internet geri gelince hemen). **Ayarlar → Bağlantı**'dan kapatılabilir.
 
-**Güncelleme bildirimi:** Wirely günde bir kez GitHub'da yeni sürüm olup olmadığına bakar; varsa haber verir ve **Ayarlar → Hakkında**'da yenilikleri gösterir.
+**Güncelleme bildirimi:** Wirely günde bir kez GitHub'da yeni sürüm olup olmadığına bakar; varsa haber verir ve **Ayarlar → Hakkında**'da yenilikleri gösterir. 1.6.1'den itibaren **İndir** DMG'yi tarayıcıya uğramadan uygulamanın içinde indirir, SHA-256 değeri GitHub'ın yayımladığıyla eşleşmezse siler, eşleşirse **İndirilenler**'e kaydedip açar.
 
-**Güncelleme:** Wirely'den çık (menü çubuğu simgesi → **Çık**), yeni DMG'yi indir ve Wirely'yi **Uygulamalar**'a sürükleyip **Değiştir**'i seç; profillerin ve ayarların kalır. Açınca macOS yine onay isteyebilir (2. adımdaki gibi). Uygulama *Servis güncellemesi gerekiyor* derse **Güncelle**'ye bas ve Mac parolanı gir; servis yeniden başladığı için açık tünel kapanır, sonra tekrar bağlan.
+**Güncelleme:** Wirely'den çık (menü çubuğu simgesi → **Çık**), yeni DMG'yi indir ve Wirely'yi **Uygulamalar**'a sürükleyip **Değiştir**'i seç; profillerin ve ayarların kalır. Uygulamanın içinden indirilen DMG'deki Wirely onay istemeden açılır; tarayıcıdan indirildiyse macOS yine onay isteyebilir (2. adımdaki gibi). Uygulama *Servis güncellemesi gerekiyor* derse **Güncelle**'ye bas ve Mac parolanı gir; servis yeniden başladığı için açık tünel kapanır, sonra tekrar bağlan.
 
 Kaldırmak için: **Ayarlar → Servis → Servisi kaldır**, sonra uygulamayı Çöp Sepeti'ne at.

@@ -142,7 +142,7 @@ let stringsEN: [L: String] = [
     .openDownload: "Open",
     .tryAgain: "Try again",
     .releasePage: "Release page",
-    .downloadHint: "Drag Wirely to Applications and choose Replace.",
+    .downloadHint: "Quit Wirely, then drag it to Applications and choose Replace.",
     .downloadFailedNetwork: "Download failed. Try again or get it from the release page.",
     .downloadFailedChecksum: "The download didn't match the published checksum, so it was deleted.",
     .downloadFailedSave: "Couldn't save to Downloads.",

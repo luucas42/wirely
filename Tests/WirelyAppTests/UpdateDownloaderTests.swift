@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import CryptoKit
+import CoreServices
 @testable import WirelyApp
 
 private final class FakeFetcher: UpdateFileFetching, @unchecked Sendable {
@@ -9,6 +10,8 @@ private final class FakeFetcher: UpdateFileFetching, @unchecked Sendable {
     private var _temp: URL?
     var contents = Data("dmg-bytes".utf8)
     var fails = false
+    /// Marks the downloaded file quarantined, as a system download might.
+    var quarantineDownloads = false
     /// Reports 0.5, then waits for `release()` before returning.
     var gated = false
     private var gate: CheckedContinuation<Void, Never>?
@@ -38,6 +41,12 @@ private final class FakeFetcher: UpdateFileFetching, @unchecked Sendable {
         }
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("wirely-test-\(UUID().uuidString)")
         try contents.write(to: file)
+        if quarantineDownloads {
+            var values = URLResourceValues()
+            values.quarantineProperties = [kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload]
+            var u = file
+            try u.setResourceValues(values)
+        }
         lock.withLock { _temp = file }
         return file
     }
@@ -74,8 +83,9 @@ struct UpdateDownloaderTests {
         UpdateDownloader(fetcher: fetcher, downloads: dir, open: { opened.add($0) })
     }
 
-    @Test func successSavesQuarantinesAndOpens() async throws {
+    @Test func successSavesUnquarantinedAndOpens() async throws {
         let fetcher = FakeFetcher(), opened = Opened(), dir = scratchDir()
+        fetcher.quarantineDownloads = true
         let d = make(fetcher, opened, dir)
         d.start(release(sha: sha(fetcher.contents)))
         await d.task?.value
@@ -85,7 +95,7 @@ struct UpdateDownloaderTests {
         #expect(try Data(contentsOf: saved) == fetcher.contents)
         #expect(opened.urls == [saved])
         let values = try saved.resourceValues(forKeys: [.quarantinePropertiesKey])
-        #expect(values.quarantineProperties != nil)
+        #expect(values.quarantineProperties == nil)
         #expect(fetcher.temp.map { !FileManager.default.fileExists(atPath: $0.path) } == true)
     }
 

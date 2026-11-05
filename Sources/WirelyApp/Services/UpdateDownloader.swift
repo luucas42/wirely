@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import CryptoKit
-import CoreServices
 
 /// Fetches a file to a temporary location, reporting progress (0…1, nil when the size is unknown).
 protocol UpdateFileFetching: Sendable {
@@ -162,7 +161,7 @@ final class UpdateDownloader: ObservableObject {
             return
         }
 
-        Self.quarantine(target, dmg: dmg, page: release.pageURL)
+        Self.clearQuarantine(target)
         state = .done(version: version, file: target)
         openURL(target)
     }
@@ -172,17 +171,13 @@ final class UpdateDownloader: ObservableObject {
         state = .downloading(version: version, fraction: fraction)
     }
 
-    /// Marks the file like a browser download so Gatekeeper still checks it on first launch. Failures are ignored.
-    private static func quarantine(_ file: URL, dmg: URL, page: URL) {
-        var values = URLResourceValues()
-        values.quarantineProperties = [
-            kLSQuarantineAgentNameKey as String: "Wirely",
-            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload,
-            kLSQuarantineDataURLKey as String: dmg,
-            kLSQuarantineOriginURLKey as String: page,
-        ]
-        var url = file
-        try? url.setResourceValues(values)
+    /// The file came over HTTPS from GitHub and matched the published SHA-256, so it is not quarantined: the app
+    /// dragged out of it opens without Gatekeeper's "could not verify" dialog (whose Move to Trash deletes it).
+    /// Removes an attribute the system may have added; failures are ignored.
+    private static func clearQuarantine(_ file: URL) {
+        _ = file.withUnsafeFileSystemRepresentation { path in
+            path.map { removexattr($0, "com.apple.quarantine", 0) }
+        }
     }
 
     /// Streamed, so a large DMG never sits in memory.

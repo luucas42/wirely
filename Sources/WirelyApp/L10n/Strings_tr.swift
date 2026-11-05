@@ -142,7 +142,7 @@ let stringsTR: [L: String] = [
     .openDownload: "Aç",
     .tryAgain: "Yeniden dene",
     .releasePage: "Sürüm sayfası",
-    .downloadHint: "Wirely'yi Uygulamalar'a sürükle ve Değiştir'i seç.",
+    .downloadHint: "Wirely'den çık, sonra onu Uygulamalar'a sürükle ve Değiştir'i seç.",
     .downloadFailedNetwork: "İndirme başarısız. Yeniden dene ya da sürüm sayfasından indir.",
     .downloadFailedChecksum: "İndirilen dosya yayımlanan sağlama değeriyle eşleşmedi, silindi.",
     .downloadFailedSave: "İndirilenler klasörüne kaydedilemedi.",
