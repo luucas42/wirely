@@ -66,6 +66,7 @@ public struct WirelyApp: App {
     @StateObject private var l10n = L10n.shared
     @StateObject private var router = AppRouter()
     @StateObject private var updates: UpdateChecker
+    @StateObject private var downloader = UpdateDownloader()
 
     public init() {
         let s = TunnelStore()
@@ -114,6 +115,7 @@ public struct WirelyApp: App {
                 .environmentObject(l10n)
                 .environmentObject(router)
                 .environmentObject(updates)
+                .environmentObject(downloader)
                 .environmentObject(trace)
                 .environmentObject(devices)
                 .onAppear { controller.start() }
@@ -132,6 +134,7 @@ public struct WirelyApp: App {
                 .environmentObject(l10n)
                 .environmentObject(router)
                 .environmentObject(updates)
+                .environmentObject(downloader)
                 .onAppear { controller.start() }
         } label: {
             Image(nsImage: MenuBarIcon.image(connected: controller.status.state == .connected))

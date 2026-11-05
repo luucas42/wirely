@@ -33,10 +33,12 @@ struct ReleaseInfo: Equatable, Codable {
     var notes: String
     var pageURL: URL
     var dmgURL: URL?
+    /// Lowercase 64-hex SHA-256 of the DMG; nil when the release publishes none (old cached releases too).
+    var dmgSHA256: String?
     var publishedAt: Date?
 
     private struct Payload: Decodable {
-        struct Asset: Decodable { let name: String; let browser_download_url: String }
+        struct Asset: Decodable { let name: String; let browser_download_url: String; let digest: String? }
         let tag_name: String?
         let name: String?
         let body: String?
@@ -52,11 +54,33 @@ struct ReleaseInfo: Equatable, Codable {
               p.draft != true,
               let tag = p.tag_name, let version = AppVersion(tag),
               let page = p.html_url, let pageURL = URL(string: page) else { return nil }
-        let dmg = p.assets?.first { $0.name.lowercased().hasSuffix(".dmg") }
-            .flatMap { URL(string: $0.browser_download_url) }
+        let asset = p.assets?.first { $0.name.lowercased().hasSuffix(".dmg") }
+        let dmg = asset.flatMap { URL(string: $0.browser_download_url) }
+        let sha = asset?.digest.flatMap(sha256(fromDigest:)) ?? sha256(inNotes: p.body ?? "")
         let published = p.published_at.flatMap { ISO8601DateFormatter().date(from: $0) }
         return ReleaseInfo(version: version, tag: tag, name: p.name ?? tag, notes: p.body ?? "",
-                           pageURL: pageURL, dmgURL: dmg, publishedAt: published)
+                           pageURL: pageURL, dmgURL: dmg, dmgSHA256: sha, publishedAt: published)
+    }
+
+    private static func isSHA256(_ text: String) -> Bool {
+        text.count == 64 && text.allSatisfy { $0.isASCII && $0.isHexDigit }
+    }
+
+    /// GitHub's asset `digest`: "sha256:<64 hex>".
+    private static func sha256(fromDigest digest: String) -> String? {
+        let prefix = "sha256:"
+        guard digest.lowercased().hasPrefix(prefix) else { return nil }
+        let hex = String(digest.dropFirst(prefix.count))
+        return isSHA256(hex) ? hex.lowercased() : nil
+    }
+
+    /// Fallback: the first 64-hex token after the first "SHA-256" in the release notes.
+    private static func sha256(inNotes notes: String) -> String? {
+        guard let marker = notes.range(of: "SHA-256", options: .caseInsensitive) else { return nil }
+        return notes[marker.upperBound...]
+            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+            .first { isSHA256(String($0)) }
+            .map { String($0).lowercased() }
     }
 }
 

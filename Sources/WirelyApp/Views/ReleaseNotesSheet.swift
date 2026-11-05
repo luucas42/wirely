@@ -9,6 +9,7 @@ extension ReleaseInfo: Identifiable {
 struct ReleaseNotesSheet: View {
     let release: ReleaseInfo
     @EnvironmentObject private var l10n: L10n
+    @EnvironmentObject private var downloader: UpdateDownloader
     @Environment(\.previewMode) private var previewMode
     @Environment(\.dismiss) private var dismiss
 
@@ -48,14 +49,14 @@ struct ReleaseNotesSheet: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
+            UpdateDownloadMessage(release: release)
             Spacer(minLength: 0)
+            if case .failed = downloader.state(for: release) {
+                OutlinePill(action: { NSWorkspace.shared.open(release.pageURL) }) { Text(l10n(.releasePage)) }
+            }
             OutlinePill(action: { dismiss() }) { Text(l10n(.close)) }
-            PillButton(size: 13, action: download) { Text(l10n(.downloadUpdate)) }
+            UpdateDownloadButton(release: release)
         }
-    }
-
-    private func download() {
-        NSWorkspace.shared.open(release.dmgURL ?? release.pageURL)
     }
 
     private var notes: some View {

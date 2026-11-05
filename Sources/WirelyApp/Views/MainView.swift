@@ -11,6 +11,7 @@ struct MainView: View {
     @EnvironmentObject private var l10n: L10n
     @EnvironmentObject private var router: AppRouter
     @EnvironmentObject private var updates: UpdateChecker
+    @EnvironmentObject private var downloader: UpdateDownloader
     @EnvironmentObject private var trace: TraceModel
     @EnvironmentObject private var devices: DeviceScanner
     @Environment(\.previewMode) private var previewMode
@@ -85,6 +86,7 @@ struct MainView: View {
         .sheet(item: $notesRelease) { r in
             ReleaseNotesSheet(release: r)
                 .environmentObject(l10n)
+                .environmentObject(downloader)
         }
         .alert(l10n(.importFailed), isPresented: $showImportErrors) {
             Button(l10n(.done)) {}

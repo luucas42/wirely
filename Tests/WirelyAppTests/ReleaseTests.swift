@@ -118,4 +118,64 @@ struct ReleaseTests {
         let md = "<p align=\"center\">\n  <img src=\"x.png\">\n</p>\n> [!NOTE]\n> Careful here.\nAfter."
         #expect(ReleaseNotes.blocks(md, language: .en) == [.paragraph("Careful here. After.")])
     }
+
+    // MARK: Checksum
+
+    private static let hashA = String(repeating: "ab", count: 32)
+    private static let hashB = String(repeating: "cd", count: 32)
+
+    private func json(digest: String?, body: String) -> Data {
+        let digestField = digest.map { ", \"digest\": \"\($0)\"" } ?? ""
+        return Data("""
+        {"tag_name":"v9.9.9","name":"Wirely 9.9.9","body":\(String(decoding: try! JSONEncoder().encode(body), as: UTF8.self)),
+         "html_url":"https://github.com/example/app/releases/tag/v9.9.9","draft":false,
+         "assets":[{"name":"Wirely-9.9.9.dmg","size":5590491\(digestField),
+         "browser_download_url":"https://github.com/example/app/releases/download/v9.9.9/Wirely-9.9.9.dmg"}]}
+        """.utf8)
+    }
+
+    private let notesWithHash = "Notes\n\n**SHA-256** `Wirely-9.9.9.dmg`\n```\n\(String(repeating: "cd", count: 32))\n```\n"
+
+    @Test func digestIsParsedFromAsset() throws {
+        let r = try #require(ReleaseInfo.parse(json(digest: "sha256:\(Self.hashA)", body: "x")))
+        #expect(r.dmgSHA256 == Self.hashA)
+    }
+
+    @Test func uppercaseDigestIsLowercased() throws {
+        let r = try #require(ReleaseInfo.parse(json(digest: "sha256:\(Self.hashA.uppercased())", body: "x")))
+        #expect(r.dmgSHA256 == Self.hashA)
+    }
+
+    @Test func malformedDigestFallsBackToNotes() throws {
+        for bad in ["sha256:xyz", "sha256:\(String(Self.hashA.dropLast()))", "md5:\(Self.hashA)"] {
+            let r = try #require(ReleaseInfo.parse(json(digest: bad, body: notesWithHash)))
+            #expect(r.dmgSHA256 == Self.hashB, "digest \(bad)")
+        }
+    }
+
+    @Test func notesOnlyHashIsParsed() throws {
+        let r = try #require(ReleaseInfo.parse(json(digest: nil, body: notesWithHash)))
+        #expect(r.dmgSHA256 == Self.hashB)
+        let upper = notesWithHash.replacingOccurrences(of: Self.hashB, with: Self.hashB.uppercased())
+        #expect(try #require(ReleaseInfo.parse(json(digest: nil, body: upper))).dmgSHA256 == Self.hashB)
+    }
+
+    @Test func noUsableChecksumIsNil() throws {
+        #expect(try #require(ReleaseInfo.parse(json(digest: nil, body: "No hash here"))).dmgSHA256 == nil)
+        // Hash before the marker, or not a whole 64-hex token, doesn't count.
+        let before = "\(Self.hashA)\n**SHA-256** soon"
+        #expect(try #require(ReleaseInfo.parse(json(digest: nil, body: before))).dmgSHA256 == nil)
+        let long = "**SHA-256**\n\(Self.hashA)ab"
+        #expect(try #require(ReleaseInfo.parse(json(digest: nil, body: long))).dmgSHA256 == nil)
+    }
+
+    @Test func oldCachedReleaseWithoutChecksumDecodes() throws {
+        let old = """
+        {"version":{"parts":[1,2,0]},"tag":"v1.2.0","name":"Wirely 1.2.0","notes":"n",
+         "pageURL":"https://example.com/r","dmgURL":"https://example.com/a.dmg"}
+        """
+        let r = try JSONDecoder().decode(ReleaseInfo.self, from: Data(old.utf8))
+        #expect(r.dmgSHA256 == nil)
+        #expect(r.dmgURL == URL(string: "https://example.com/a.dmg"))
+    }
 }

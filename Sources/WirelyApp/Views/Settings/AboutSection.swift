@@ -4,6 +4,7 @@ import AppKit
 /// Settings → About: identity, update check, links and credits.
 struct AboutSection: View {
     @EnvironmentObject private var updates: UpdateChecker
+    @EnvironmentObject private var downloader: UpdateDownloader
     @EnvironmentObject private var l10n: L10n
     @Environment(\.previewMode) private var previewMode
     @State private var notesRelease: ReleaseInfo?
@@ -35,7 +36,7 @@ struct AboutSection: View {
             credits
         }
         .sheet(item: $notesRelease) { r in
-            ReleaseNotesSheet(release: r).environmentObject(l10n)
+            ReleaseNotesSheet(release: r).environmentObject(l10n).environmentObject(downloader)
         }
     }
 
@@ -59,10 +60,15 @@ struct AboutSection: View {
     // MARK: Update row
 
     private var updateRow: some View {
-        HStack(spacing: 12) {
-            stateLabel
-            Spacer(minLength: 12)
-            controls
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                stateLabel
+                Spacer(minLength: 12)
+                controls
+            }
+            if case .available(let r) = updates.state {
+                UpdateDownloadMessage(release: r)
+            }
         }
         .padding(.vertical, 14)
     }
@@ -95,7 +101,7 @@ struct AboutSection: View {
         if case .available(let r) = updates.state {
             HStack(spacing: 10) {
                 OutlinePill(action: { notesRelease = r }) { Text(l10n(.whatsNew)) }
-                PillButton(size: 13, action: { open(r.dmgURL ?? r.pageURL) }) { Text(l10n(.downloadUpdate)) }
+                UpdateDownloadButton(release: r)
             }
         } else {
             OutlinePill(action: { Task { await updates.checkNow() } }) { Text(l10n(.checkForUpdates)) }

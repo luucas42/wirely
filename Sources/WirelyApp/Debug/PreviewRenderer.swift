@@ -58,6 +58,7 @@ enum PreviewRenderer {
         var reconnect: ReconnectStatus?
         var settings: SettingsSection?
         var update: ReleaseInfo?
+        var download: UpdateDownloader.State?
         var checked = false
         var sheet = false
         var route: RouteScenario?
@@ -149,6 +150,13 @@ enum PreviewRenderer {
     /// Never reached: previews must not touch the network.
     private struct OfflineHTTP: HTTPFetching {
         func get(_ url: URL, timeout: TimeInterval) async throws -> Data { throw URLError(.notConnectedToInternet) }
+    }
+
+    /// Never fetches: previews only show fixed `UpdateDownloader` states.
+    private struct OfflineFetcher: UpdateFileFetching {
+        func download(_ url: URL, progress: @escaping @Sendable (Double?) -> Void) async throws -> URL {
+            throw URLError(.notConnectedToInternet)
+        }
     }
 
     private static let sampleNotes = """
@@ -254,15 +262,18 @@ enum PreviewRenderer {
         }
         if let section = s.settings { router.openSettings(section) }
         let updates = updateChecker(s)
+        let downloader = UpdateDownloader(fetcher: OfflineFetcher(), downloads: FileManager.default.temporaryDirectory, open: { _ in })
+        if let d = s.download { downloader.setPreview(d) }
         let trace = traceModel(s)
         if s.sheet, let r = s.update {
-            return AnyView(ReleaseNotesSheet(release: r).environmentObject(l10n))
+            return AnyView(ReleaseNotesSheet(release: r).environmentObject(l10n).environmentObject(downloader))
         }
         if s.menuBar {
             return AnyView(MenuBarView(store: store, controller: controller, route: route)
                 .environmentObject(l10n)
                 .environmentObject(router)
                 .environmentObject(updates)
+                .environmentObject(downloader)
                 .environmentObject(trace)
                 .environmentObject(scanner))
         }
@@ -273,6 +284,7 @@ enum PreviewRenderer {
             .environmentObject(l10n)
             .environmentObject(router)
             .environmentObject(updates)
+            .environmentObject(downloader)
             .environmentObject(trace)
             .environment(\.splitPreview, SplitPreviewState(draft: s.splitDraft, expanded: s.splitExpanded))
             .frame(width: s.size.width, height: s.size.height))
@@ -329,6 +341,12 @@ enum PreviewRenderer {
             Scenario(label: "settings-service", settings: .service),
             Scenario(label: "settings-profiles-empty", profiles: [], selected: nil, exit: false, settings: .profiles),
             Scenario(label: "settings-about", settings: .about, update: release),
+            Scenario(label: "settings-about-downloading", settings: .about, update: release,
+                     download: .downloading(version: "1.2.0", fraction: 0.45)),
+            Scenario(label: "settings-about-update-done", settings: .about, update: release,
+                     download: .done(version: "1.2.0", file: URL(fileURLWithPath: "/tmp/Wirely-1.2.0.dmg"))),
+            Scenario(label: "settings-about-update-failed", settings: .about, update: release,
+                     download: .failed(version: "1.2.0", .network)),
             Scenario(label: "settings-about-uptodate", settings: .about, checked: true),
             Scenario(label: "update-banner", status: connected, samples: true, latency: 46, update: release),
             Scenario(label: "route-connected", status: connected, samples: true, latency: 46,
@@ -477,6 +495,8 @@ enum PreviewRenderer {
         render(generalTR, scheme: .dark, now: now, into: directory)
 
         render(Scenario(label: "release-notes", update: release, sheet: true), scheme: .dark, now: now, into: directory)
+        render(Scenario(label: "update-sheet-downloading", update: release, download: .downloading(version: "1.2.0", fraction: 0.45),
+                        sheet: true), scheme: .dark, now: now, into: directory)
 
         // Debug: land-mask sanity checks (whole world; Istanbul + Frankfurt framing).
         let l10n = L10n(fixed: .en)
