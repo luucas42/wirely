@@ -93,11 +93,14 @@ public enum KillSwitchPlan {
 
     /// Exclude-mode rules: the full kill-switch `rules(...)` plus the `wirely_split` table, whose destinations
     /// may leave outside the tunnel (`pass out quick to <wirely_split>` right before the final block).
-    /// - Parameter table: IP addresses / CIDR networks; anything else is skipped.
-    public static func excludeRules(iface: String?, endpoints: [Endpoint], allowLAN: Bool, table: [String]) -> String {
+    /// - Parameters:
+    ///   - table: IP addresses / CIDR networks; anything else is skipped.
+    ///   - allowDNS: as in `rules` (hostname endpoint lookup while reconnecting under the kill switch).
+    public static func excludeRules(iface: String?, endpoints: [Endpoint], allowLAN: Bool, table: [String],
+                                    allowDNS: Bool = false) -> String {
         var seen = Set<String>()
         let entries = table.filter { IPNetwork($0) != nil && seen.insert($0).inserted }
-        var lines = rules(iface: iface, endpoints: endpoints, allowLAN: allowLAN)
+        var lines = rules(iface: iface, endpoints: endpoints, allowLAN: allowLAN, allowDNS: allowDNS)
             .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         if lines.last == "" { lines.removeLast() }
         let tableLine = entries.isEmpty ? "table <\(splitTable)> persist"

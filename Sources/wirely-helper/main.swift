@@ -6,7 +6,7 @@ import WirelyHelperKit
 let usage = """
 Kullanım:
   wirely-helper daemon --allowed-uid <uid> --wireguard-go <yol>
-  wirely-helper ctl status | down | up <conf-yolu> [--name N] [--split a,b,c] | split a,b,c | trace <hedef>
+  wirely-helper ctl status | down | up <conf-yolu> [--name N] [--split a,b,c [--exclude]] | split a,b,c | trace <hedef>
   wirely-helper trace <hedef>
   wirely-helper cleanup
 """
@@ -90,7 +90,8 @@ func runDaemon(_ args: [String]) -> Never {
             do {
                 let status = try manager.up(name: name, configText: config,
                                             killSwitch: request.killSwitch ?? false,
-                                            allowLAN: request.allowLAN ?? true, split: splitRules)
+                                            allowLAN: request.allowLAN ?? true, split: splitRules,
+                                            splitExclude: request.splitExclude ?? false)
                 return HelperResponse(ok: true, error: nil, status: status, helperVersion: version)
             } catch {
                 let coded = (error as? TunnelError)?.codeAndArg
@@ -180,7 +181,10 @@ func runCtl(_ args: [String]) -> Never {
             fail("Yapılandırma dosyası okunamadı: \(path)")
         }
         let split = option("--split", in: args).map { $0.split(separator: ",").map(String.init) }
-        request = HelperRequest(command: .up, tunnelName: name, config: text, split: split)
+        let exclude = args.contains("--exclude")
+        if exclude && split == nil { fail("--exclude için --split gerekli") }
+        request = HelperRequest(command: .up, tunnelName: name, config: text, split: split,
+                                splitExclude: exclude ? true : nil)
     case "split":
         guard args.count >= 2 else { usageExit() }
         request = HelperRequest(command: .split, split: args[1].split(separator: ",").map(String.init))

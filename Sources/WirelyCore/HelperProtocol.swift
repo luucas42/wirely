@@ -9,6 +9,8 @@ public enum HelperConstants {
     public static let plistPath = "/Library/LaunchDaemons/io.github.luucas42.wirely.helper.plist"
     public static let logPath = "/Library/Logs/Wirely/helper.log"
     public static let statePath = "/Library/Application Support/Wirely/state.json"
+    /// Exclude-mode bypass routes that outlive the utun (see `BypassLedger`).
+    public static let bypassPath = "/Library/Application Support/Wirely/bypass.json"
 }
 
 public enum TunnelState: String, Codable { case disconnected, connecting, connected, failed }

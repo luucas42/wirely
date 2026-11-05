@@ -27,21 +27,40 @@ public final class TunnelManager {
         let config: TunnelConfig
         let iface: String
         let killSwitch: Bool
+        /// Exclude mode: everything is tunnelled except the listed destinations (bypass routes).
+        let exclude: Bool
         let table = SplitRouteTable()
         var proxy: SplitDNSServing?
         var endpointIPs: [IPAddress] = []
         private let lock = NSLock()
         private var capLogged = Set<SplitRule>()
+        // Exclude mode: written on the manager queue, read by the learn hook (Task 2b) on proxy threads.
+        private var _defaults = DefaultRoutes(v4Gateway: nil, v4Interface: nil, v6Gateway: nil, v6Interface: nil)
+        private var _filter = BypassFilter()
 
-        init(rules: [SplitRule], config: TunnelConfig, iface: String, killSwitch: Bool) {
+        init(rules: [SplitRule], config: TunnelConfig, iface: String, killSwitch: Bool, exclude: Bool = false) {
             self.rules = rules
             self.config = config
             self.iface = iface
             self.killSwitch = killSwitch
+            self.exclude = exclude
+        }
+
+        /// The physical default gateway/interface that bypass routes use.
+        var defaults: DefaultRoutes {
+            get { lock.lock(); defer { lock.unlock() }; return _defaults }
+            set { lock.lock(); defer { lock.unlock() }; _defaults = newValue }
+        }
+        /// What must never be bypass-routed.
+        var filter: BypassFilter {
+            get { lock.lock(); defer { lock.unlock() }; return _filter }
+            set { lock.lock(); defer { lock.unlock() }; _filter = newValue }
         }
 
         var domains: [SplitRule] { rules.filter { $0.isDomain } }
-        var staticTexts: [String] { TunnelManager.staticTexts(rules, config) }
+        var staticTexts: [String] {
+            exclude ? TunnelManager.excludeTableTexts(rules) : TunnelManager.staticTexts(rules, config)
+        }
         var tunnelFamilies: Set<IPFamily> { Set(config.interface.addresses.map(\.address.family)) }
 
         func markCapLogged(_ rule: SplitRule) -> Bool {
@@ -59,6 +78,32 @@ public final class TunnelManager {
         return texts.filter { seen.insert($0).inserted }
     }
 
+    /// Exclude mode: the static rule addresses/networks that may leave outside the tunnel (the pf table).
+    /// IPv4 only; the bypass is not routed for IPv6.
+    fileprivate static func excludeTableTexts(_ rules: [SplitRule]) -> [String] {
+        var seen = Set<String>()
+        return rules.compactMap { rule -> String? in
+            switch rule {
+            case .domain: return nil
+            case .address(let a): return a.family == .v4 ? rule.text : nil
+            case .network(let n): return n.address.family == .v4 ? rule.text : nil
+            }
+        }.filter { seen.insert($0).inserted }
+    }
+
+    /// The pf ruleset for the kill switch in any mode (`table` nil = full tunnel).
+    fileprivate static func killRules(iface: String?, endpoints: [Endpoint], allowLAN: Bool, table: [String]?,
+                                      exclude: Bool, allowDNS: Bool = false) -> String {
+        guard let table else {
+            return KillSwitchPlan.rules(iface: iface, endpoints: endpoints, allowLAN: allowLAN, allowDNS: allowDNS)
+        }
+        if exclude {
+            return KillSwitchPlan.excludeRules(iface: iface, endpoints: endpoints, allowLAN: allowLAN,
+                                               table: table, allowDNS: allowDNS)
+        }
+        return KillSwitchPlan.splitRules(iface: iface, endpoints: endpoints, table: table)
+    }
+
     private let runner: CommandRunner
     private let makeLauncher: () -> WireGuardLauncher
     private let resolver: EndpointResolver
@@ -70,6 +115,7 @@ public final class TunnelManager {
     private let makeSplitProxy: (SplitDNSConfig, @escaping (SplitRule, [IPAddress]) -> Void) -> SplitDNSServing
     private let normalDNS: NormalDNSSource
     private let background: (@escaping () -> Void) -> Void
+    private let ledger: BypassLedger
 
     private var active: Active?
     private var lastFailed: TunnelStatus?
@@ -85,7 +131,8 @@ public final class TunnelManager {
                 makeSplitProxy: @escaping (SplitDNSConfig, @escaping (SplitRule, [IPAddress]) -> Void) -> SplitDNSServing
                     = { SplitDNSProxy(listen: IPAddress("127.0.0.1")!, port: 53, config: $0, onLearn: $1) },
                 normalDNS: NormalDNSSource = SystemDNSUpstreams(),
-                background: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.global(qos: .utility).async(execute: $0) }) {
+                background: @escaping (@escaping () -> Void) -> Void = { DispatchQueue.global(qos: .utility).async(execute: $0) },
+                ledger: BypassLedger = BypassLedger()) {
         self.runner = runner
         self.makeLauncher = makeLauncher
         self.resolver = resolver
@@ -97,12 +144,13 @@ public final class TunnelManager {
         self.makeSplitProxy = makeSplitProxy
         self.normalDNS = normalDNS
         self.background = background
+        self.ledger = ledger
     }
 
     // MARK: - up
 
     public func up(name: String, configText: String, killSwitch: Bool = false, allowLAN: Bool = true,
-                   split: [SplitRule]? = nil) throws -> TunnelStatus {
+                   split: [SplitRule]? = nil, splitExclude: Bool = false) throws -> TunnelStatus {
         let started = DispatchTime.now()
         let config: TunnelConfig
         do {
@@ -111,7 +159,10 @@ public final class TunnelManager {
             throw TunnelError.config(e)
         }
         // nil = full tunnel (everything below is unchanged); non-nil, even empty = split mode.
-        let staticTable: [String]? = split.map { TunnelManager.staticTexts($0, config) }
+        let exclude = split != nil && splitExclude
+        let staticTable: [String]? = split.map {
+            exclude ? TunnelManager.excludeTableTexts($0) : TunnelManager.staticTexts($0, config)
+        }
 
         // Hand over from the current tunnel (or from blocking after a drop). If both sides use the
         // kill switch, pf stays engaged throughout, so there's no unprotected gap while switching.
@@ -138,8 +189,8 @@ public final class TunnelManager {
 
         // While blocking, a hostname endpoint can't be resolved: briefly allow DNS for the lookup.
         if wasBlocking, config.peers.contains(where: { $0.endpoint.map { IPAddress($0.host) == nil } ?? false }) {
-            let rules = staticTable.map { KillSwitchPlan.splitRules(iface: nil, endpoints: [], table: $0) }
-                ?? KillSwitchPlan.rules(iface: nil, endpoints: [], allowLAN: allowLAN, allowDNS: true)
+            let rules = TunnelManager.killRules(iface: nil, endpoints: [], allowLAN: allowLAN, table: staticTable,
+                                                exclude: exclude, allowDNS: true)
             _ = try? firewall.engage(rules: rules, token: blockToken)
         }
 
@@ -149,7 +200,7 @@ public final class TunnelManager {
                 do {
                     resolved.append(try resolver.resolve(ep))
                 } catch {
-                    if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN, splitTable: staticTable) }
+                    if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN, splitTable: staticTable, splitExclude: exclude) }
                     throw TunnelError.resolve(ep.host)
                 }
             } else {
@@ -165,19 +216,21 @@ public final class TunnelManager {
         var killRecord: KillSwitchRecord?
         if killSwitch {
             do {
-                let rules = staticTable.map { KillSwitchPlan.splitRules(iface: nil, endpoints: serverEndpoints, table: $0) }
-                    ?? KillSwitchPlan.rules(iface: nil, endpoints: serverEndpoints, allowLAN: allowLAN)
+                let rules = TunnelManager.killRules(iface: nil, endpoints: serverEndpoints, allowLAN: allowLAN,
+                                                    table: staticTable, exclude: exclude)
                 let token = try firewall.engage(rules: rules, token: blockToken)
                 killRecord = KillSwitchRecord(token: token, allowLAN: allowLAN, endpoints: serverEndpoints,
-                                              splitTable: staticTable)
+                                              splitTable: staticTable, splitExclude: exclude ? true : nil)
             } catch {
-                if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN, splitTable: staticTable) }
+                if wasBlocking { keepBlocking(name: name, token: blockToken, allowLAN: allowLAN, splitTable: staticTable, splitExclude: exclude) }
                 throw TunnelError.commandFailed("kill switch: \(describe(error))")
             }
         }
 
         let targets: [IPNetwork]
-        if let split {
+        if exclude {
+            targets = NetPlan.routeTargets(config)   // exactly the full-tunnel routes; bypass routes come after
+        } else if let split {
             let planned = splitStaticTargets(config, split)
             targets = planned.targets
             for t in planned.skipped { log("Bölünmüş tünel: \(t) atlandı (tünelde bu aile için adres yok)") }
@@ -186,8 +239,11 @@ public final class TunnelManager {
         }
         let defaults = readDefaultRoutes()
         var physicalMTU: Int?
+        var connectedSubnets: [IPNetwork] = []
         if let physical = defaults.v4Interface {
-            physicalMTU = NetPlan.parseMTU(ifconfig: runner.run(NetPlan.ifconfigShow(physical)).stdout)
+            let ifconfig = runner.run(NetPlan.ifconfigShow(physical)).stdout
+            physicalMTU = NetPlan.parseMTU(ifconfig: ifconfig)
+            connectedSubnets = NetPlan.parseIPv4Subnets(ifconfig: ifconfig)
         }
 
         let launcher = makeLauncher()
@@ -197,7 +253,7 @@ public final class TunnelManager {
         } catch {
             launcher.stop()
             if let k = killRecord {
-                if wasBlocking { keepBlocking(name: name, token: k.token, allowLAN: allowLAN, splitTable: staticTable) }
+                if wasBlocking { keepBlocking(name: name, token: k.token, allowLAN: allowLAN, splitTable: staticTable, splitExclude: exclude) }
                 else { firewall.disengage(token: k.token) }
             }
             throw TunnelError.wireguard(describe(error))
@@ -206,12 +262,20 @@ public final class TunnelManager {
         var state = PersistedState(
             tunnelName: name, interface: iface, wireguardPID: launcher.pid,
             endpointRoutes: [], dnsBackups: [],
-            dnsServers: split == nil ? config.interface.dnsServers : [],
-            dnsSearch: split == nil ? config.interface.dnsSearchDomains : [],
+            dnsServers: split == nil || exclude ? config.interface.dnsServers : [],
+            dnsSearch: split == nil || exclude ? config.interface.dnsSearchDomains : [],
             connectedAt: now(), ignoredKeys: config.ignoredKeys, killSwitch: killRecord,
             split: split?.map(\.text))
-        let splitCtx = split.map { SplitContext(rules: $0, config: config, iface: iface, killSwitch: killRecord != nil) }
+        let splitCtx = split.map {
+            SplitContext(rules: $0, config: config, iface: iface, killSwitch: killRecord != nil, exclude: exclude)
+        }
         splitCtx?.endpointIPs = resolved.compactMap { $0 }
+        if let splitCtx, exclude {
+            splitCtx.defaults = defaults
+            splitCtx.filter = BypassFilter(endpoints: splitCtx.endpointIPs,
+                                           profileNets: SplitCoverage.profileNetworks(config),
+                                           connected: connectedSubnets)
+        }
 
         do {
             // Persist incrementally so a crash mid-up leaves a record for cleanupStale().
@@ -254,19 +318,29 @@ public final class TunnelManager {
                 }
             }
 
+            if let splitCtx, exclude {
+                try addBypassRoutes(for: splitCtx, plan: bypassPlan(splitCtx, splitCtx.rules), routes: defaults)
+                for case .domain(let d) in splitCtx.rules {
+                    // Task 2b: the DNS proxy and learning make these work.
+                    log("Bölünmüş tünel: \(d) için site kuralları dışlama modunda henüz etkin değil")
+                }
+            }
+
             if let k = killRecord {
                 do {
-                    let rules = k.splitTable.map { KillSwitchPlan.splitRules(iface: iface, endpoints: k.endpoints, table: $0) }
-                        ?? KillSwitchPlan.rules(iface: iface, endpoints: k.endpoints, allowLAN: k.allowLAN)
+                    let rules = TunnelManager.killRules(iface: iface, endpoints: k.endpoints, allowLAN: k.allowLAN,
+                                                        table: k.splitTable, exclude: k.splitExclude == true)
                     _ = try firewall.engage(rules: rules, token: k.token)
                 } catch {
                     throw TunnelError.commandFailed("kill switch: \(describe(error))")
                 }
             }
 
-            if let splitCtx {
+            if let splitCtx, !splitCtx.exclude {
                 try startSplitDNS(splitCtx, state: &state)
             } else if !config.interface.dnsServers.isEmpty {
+                // Full-tunnel DNS. Exclude mode always lands here in this version; Task 2b puts the DNS proxy
+                // in front of it and falls back to exactly this on every proxy failure.
                 // One read, one durable backup, one commit for every service.
                 let current: [DNSBackup]
                 do { current = try dns.snapshot() } catch { throw TunnelError.commandFailed("DNS: \(describe(error))") }
@@ -330,6 +404,7 @@ public final class TunnelManager {
                 ($0.text, learned[$0.text] ?? SplitRuleStatus(routed: 0, rejected: 0))
             })
             s.splitDNS = ctx.proxy != nil
+            s.splitExclude = ctx.exclude
         }
         do {
             let snap = try UAPI.parseGet(try a.launcher.get())
@@ -390,6 +465,7 @@ public final class TunnelManager {
         guard var a = active, let ctx = a.split else { throw TunnelError.splitNotActive }
         var seen = Set<SplitRule>()
         let rules = newRules.filter { seen.insert($0).inserted }
+        if ctx.exclude { return try updateExcludeSplit(&a, ctx, rules) }
         let old = ctx.rules
         let oldStatic = Set(TunnelManager.staticTexts(old, ctx.config))
         let newStatic = TunnelManager.staticTexts(rules, ctx.config)
@@ -468,6 +544,128 @@ public final class TunnelManager {
             preResolve(addedDomains, with: proxy)
         } else if !removedDomains.isEmpty {
             flushDNSCache()
+        }
+
+        a.state.split = rules.map(\.text)
+        active = a
+        try persist(a.state)
+        let s = status()
+        onStatusChange?(s)
+        return s
+    }
+
+    // MARK: - split tunnel, exclude mode
+
+    /// Bypass routes the rules call for, plus what was left out and why.
+    private struct BypassPlan {
+        var routes: [IPNetwork] = []
+        var skipped: [(net: IPNetwork, reason: String)] = []
+        var ipv6: [SplitRule] = []
+    }
+
+    /// IPv4 address/network rules not on the skip list. Domain rules are Task 2b (learned addresses).
+    private func bypassPlan(_ ctx: SplitContext, _ rules: [SplitRule]) -> BypassPlan {
+        let filter = ctx.filter
+        var plan = BypassPlan()
+        var seen = Set<IPNetwork>()
+        for rule in rules {
+            let net: IPNetwork
+            switch rule {
+            case .domain: continue
+            case .address(let a): net = IPNetwork(address: a, prefixLength: a.family == .v4 ? 32 : 128)
+            case .network(let n): net = n
+            }
+            guard net.address.family == .v4 else { plan.ipv6.append(rule); continue }
+            guard seen.insert(net).inserted else { continue }
+            if let reason = filter.skipReason(net) { plan.skipped.append((net, reason)) } else { plan.routes.append(net) }
+        }
+        return plan
+    }
+
+    private func bypassRouteDelete(_ net: IPNetwork) -> NetCommand {
+        net.prefixLength == (net.address.family == .v4 ? 32 : 128) ? NetPlan.hostRouteDelete(net.address)
+                                                                   : NetPlan.routeDelete(net)
+    }
+
+    private func logBypassPlan(_ plan: BypassPlan, only fresh: ((IPNetwork) -> Bool)? = nil) {
+        for (net, reason) in plan.skipped where fresh?(net) ?? true {
+            log("Bölünmüş tünel: \(net) atlandı (\(reason))")
+        }
+        for rule in plan.ipv6 {
+            log("Bölünmüş tünel: \(rule.text) atlandı (IPv6 dışlamaları desteklenmiyor)")
+        }
+    }
+
+    /// Records the routes in the ledger first, then adds them via the physical gateway. A failed `route add`
+    /// is logged and forgotten (the destination just stays in the tunnel); a failed ledger write throws.
+    private func addBypassRoutes(for ctx: SplitContext, plan: BypassPlan, routes: DefaultRoutes) throws {
+        logBypassPlan(plan)
+        do { try ledger.add(plan.routes) } catch {
+            throw TunnelError.commandFailed("durum kaydedilemedi: \(describe(error))")
+        }
+        var failed: [IPNetwork] = []
+        for n in plan.routes {
+            let c = NetPlan.bypassRouteAdd(n, routes: routes)
+            let r = runner.run(c)
+            if r.status != 0 {
+                log("Yönlendirme eklenemedi: \(c) (\(r.stderr))")
+                failed.append(n)
+            }
+        }
+        ledger.remove(failed)
+    }
+
+    /// Deletes every ledger route and empties the ledger (teardown, crash cleanup).
+    private func dropBypassRoutes() {
+        for n in ledger.all {
+            let c = bypassRouteDelete(n)
+            if runner.run(c).status != 0 { log("Yönlendirme silinemedi: \(c)") }
+        }
+        ledger.clear()
+    }
+
+    /// Static part of a live rule change in exclude mode: bypass routes and the pf table.
+    /// Task 2b adds the domain part (proxy rules, forgetting what removed names learned, pre-resolution).
+    private func updateExcludeSplit(_ a: inout Active, _ ctx: SplitContext, _ rules: [SplitRule]) throws -> TunnelStatus {
+        let old = bypassPlan(ctx, ctx.rules)
+        let new = bypassPlan(ctx, rules)
+        let oldTable = Set(TunnelManager.excludeTableTexts(ctx.rules))
+        let newTable = TunnelManager.excludeTableTexts(rules)
+
+        let added = new.routes.filter { !old.routes.contains($0) }
+        let removed = old.routes.filter { !new.routes.contains($0) }
+        let freshPlan = BypassPlan(routes: added, skipped: new.skipped, ipv6: new.ipv6.filter { !ctx.rules.contains($0) })
+        let wasSkipped = Set(old.skipped.map(\.net))
+        logBypassPlan(freshPlan, only: { !wasSkipped.contains($0) })
+        do { try ledger.add(added) } catch {
+            throw TunnelError.commandFailed("durum kaydedilemedi: \(describe(error))")
+        }
+        ctx.rules = rules
+        for n in removed {
+            let c = bypassRouteDelete(n)
+            if runner.run(c).status != 0 { log("Yönlendirme silinemedi: \(c)") }
+        }
+        ledger.remove(removed)
+        if !added.isEmpty {
+            let defaults = readDefaultRoutes()
+            ctx.defaults = defaults
+            var failed: [IPNetwork] = []
+            for n in added {
+                let c = NetPlan.bypassRouteAdd(n, routes: defaults)
+                let r = runner.run(c)
+                if r.status != 0 { log("Yönlendirme eklenemedi: \(c) (\(r.stderr))"); failed.append(n) }
+            }
+            ledger.remove(failed)
+        }
+
+        // Learned addresses (Task 2b) must survive in the table: subtract ctx.table.allAddresses here too.
+        let learned = Set(ctx.table.allAddresses.map(\.description))
+        let toDelete = oldTable.subtracting(newTable).subtracting(learned).sorted()
+        let toAdd = newTable.filter { !oldTable.contains($0) }
+        if ctx.killSwitch {
+            if !toDelete.isEmpty { _ = runner.run(KillSwitchPlan.tableDelete(toDelete)) }
+            if !toAdd.isEmpty { _ = runner.run(KillSwitchPlan.tableAdd(toAdd)) }
+            a.state.killSwitch?.splitTable = newTable + ctx.table.allAddresses.map(\.description)
         }
 
         a.state.split = rules.map(\.text)
@@ -580,7 +778,11 @@ public final class TunnelManager {
     // MARK: - stale cleanup
 
     public func cleanupStale() {
-        guard active == nil, held == nil, let state = store.load() else { return }
+        guard active == nil, held == nil else { return }
+        guard let state = store.load() else {
+            dropBypassRoutes()   // bypass routes outlive the state file only after a crash in between
+            return
+        }
         if let pid = state.wireguardPID {
             let out = runner.run(NetCommand("/bin/ps", ["-p", String(pid), "-o", "comm="])).stdout
             if out.contains("wireguard-go") {
@@ -617,8 +819,8 @@ public final class TunnelManager {
     /// Records that the kill switch keeps blocking after the tunnel is gone (and persists it, so a
     /// helper restart still knows), with block-only rules: no tunnel interface, servers reachable.
     private func hold(name: String, record: KillSwitchRecord, message: String) {
-        let rules = record.splitTable.map { KillSwitchPlan.splitRules(iface: nil, endpoints: record.endpoints, table: $0) }
-            ?? KillSwitchPlan.rules(iface: nil, endpoints: record.endpoints, allowLAN: record.allowLAN)
+        let rules = TunnelManager.killRules(iface: nil, endpoints: record.endpoints, allowLAN: record.allowLAN,
+                                            table: record.splitTable, exclude: record.splitExclude == true)
         _ = try? firewall.engage(rules: rules, token: record.token)
         let h = PersistedState(tunnelName: name, interface: "", wireguardPID: nil, endpointRoutes: [],
                                dnsBackups: [], dnsServers: [], dnsSearch: [], connectedAt: now(),
@@ -629,8 +831,10 @@ public final class TunnelManager {
         log("kill switch holding: \(message)")
     }
 
-    private func keepBlocking(name: String, token: String?, allowLAN: Bool, splitTable: [String]? = nil) {
-        hold(name: name, record: KillSwitchRecord(token: token, allowLAN: allowLAN, endpoints: [], splitTable: splitTable),
+    private func keepBlocking(name: String, token: String?, allowLAN: Bool, splitTable: [String]? = nil,
+                              splitExclude: Bool = false) {
+        hold(name: name, record: KillSwitchRecord(token: token, allowLAN: allowLAN, endpoints: [], splitTable: splitTable,
+                                                  splitExclude: splitExclude ? true : nil),
              message: "Bağlantı kurulamadı; kill switch interneti engelliyor")
     }
 
@@ -651,6 +855,7 @@ public final class TunnelManager {
             let c = NetPlan.endpointRouteDelete(r.ip)
             if runner.run(c).status != 0 { log("Yönlendirme silinemedi: \(c)") }
         }
+        dropBypassRoutes()
         if !state.dnsBackups.isEmpty {
             do { try dns.apply(state.dnsBackups) } catch { log("DNS geri yüklenemedi: \(describe(error))") }
         }
