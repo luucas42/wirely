@@ -95,6 +95,7 @@ enum L: String, CaseIterable {
     case splitTitle, splitProfileLine, splitModeAll, splitModeSelected, splitHintSelected, splitHintAll
     case splitPlaceholder, splitAddAction, splitRemove, splitEmpty
     case splitAppliedNow, splitAppliedOnConnect, splitModeReconnects, splitBrowserNote
+    case splitAppliedReconnects, splitBrowserShort
     case splitBannerDNS, splitBlockedHint
     // Split tunnel: exclude direction and service groups
     case splitTopSplit, splitDirLabel, splitDirInclude, splitDirExclude

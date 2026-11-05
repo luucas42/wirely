@@ -70,6 +70,10 @@ enum PreviewRenderer {
         var splitMode = SplitMode.all
         var splitRules: [String] = []
         var splitPanel = false
+        /// The list the rules fill (`service:<id>` adds a group) and what the panel shows typed / expanded.
+        var splitList = SplitMode.selected
+        var splitDraft = ""
+        var splitExpanded: String?
     }
 
     /// Route-mode state for the full window.
@@ -192,7 +196,14 @@ enum PreviewRenderer {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("wirely-preview-split-\(UUID().uuidString)/split.json")
         let splitStore = SplitStore(url: url)
-        for rule in s.splitRules.reversed() { _ = splitStore.add(rule, for: "home") }
+        splitStore.setMode(s.splitList, for: "home")
+        for rule in s.splitRules.reversed() {
+            if rule.hasPrefix(SplitEntry.servicePrefix) {
+                splitStore.toggleGroup(String(rule.dropFirst(SplitEntry.servicePrefix.count)), in: s.splitList, for: "home")
+            } else {
+                _ = splitStore.add(rule, for: "home")
+            }
+        }
         splitStore.setMode(s.splitMode, for: "home")
         let c = ConnectionController(splitStore: splitStore)
         c.helperState = s.helper
@@ -263,6 +274,7 @@ enum PreviewRenderer {
             .environmentObject(router)
             .environmentObject(updates)
             .environmentObject(trace)
+            .environment(\.splitPreview, SplitPreviewState(draft: s.splitDraft, expanded: s.splitExpanded))
             .frame(width: s.size.width, height: s.size.height))
     }
 
@@ -355,9 +367,33 @@ enum PreviewRenderer {
         splitBlocked.split = [:]
         func splitScenario(_ label: String, status: TunnelStatus, mode: SplitMode = .selected, rules: [String] = splitRules,
                            allowed: String = splitAllowed, panel: Bool = true,
-                           size: CGSize = CGSize(width: 920, height: 600)) -> Scenario {
+                           size: CGSize = CGSize(width: 920, height: 600), list: SplitMode? = nil,
+                           draft: String = "", expanded: String? = nil) -> Scenario {
             Scenario(label: label, status: status, samples: status.state == .connected, latency: 46, size: size,
-                     allowedIPs: allowed, splitMode: mode, splitRules: rules, splitPanel: panel)
+                     allowedIPs: allowed, splitMode: mode, splitRules: rules, splitPanel: panel,
+                     splitList: list ?? (mode == .all ? .selected : mode), splitDraft: draft, splitExpanded: expanded)
+        }
+        // Exclude direction: a full-tunnel server; YouTube and Spotify as groups plus one site.
+        let exclRules = ["service:youtube", "service:spotify", "example.org"]
+        var exclConnected = connected
+        exclConnected.split = ["youtube.com": SplitRuleStatus(routed: 3, rejected: 0),
+                               "googlevideo.com": SplitRuleStatus(routed: 6, rejected: 0),
+                               "ytimg.com": SplitRuleStatus(routed: 2, rejected: 0),
+                               "spotify.com": SplitRuleStatus(routed: 2, rejected: 0),
+                               "scdn.co": SplitRuleStatus(routed: 2, rejected: 0),
+                               "example.org": SplitRuleStatus(routed: 2, rejected: 0)]
+        exclConnected.splitDNS = true
+        exclConnected.splitExclude = true
+        // README: the connected state with counts on every row.
+        let exclDocs = exclConnected
+        var exclBlocked = blocked
+        exclBlocked.split = [:]
+        exclBlocked.splitExclude = true
+        func exclScenario(_ label: String, status: TunnelStatus? = nil, mode: SplitMode = .excluded,
+                          rules: [String] = exclRules, panel: Bool = true, size: CGSize = CGSize(width: 920, height: 600),
+                          draft: String = "", expanded: String? = nil) -> Scenario {
+            splitScenario(label, status: status ?? exclConnected, mode: mode, rules: rules, allowed: defaultAllowed,
+                          panel: panel, size: size, list: .excluded, draft: draft, expanded: expanded)
         }
         let minSize = CGSize(width: 820, height: 560)
         let splitScenarios: [Scenario] = [
@@ -376,6 +412,15 @@ enum PreviewRenderer {
             splitScenario("blocked-split-panel-min", status: splitBlocked, size: minSize),
             splitScenario("connected-min", status: connected, rules: [], panel: false, size: minSize),
             splitScenario("split-pill", status: splitConnected, panel: false),
+            exclScenario("split-exclude", expanded: "service:youtube"),
+            // Taller than the default window so the expanded group shows all its domains.
+            exclScenario("split-exclude-tall", size: CGSize(width: 920, height: 740), expanded: "service:youtube"),
+            exclScenario("split-exclude-suggest", rules: ["service:spotify", "example.org"], draft: "youtube"),
+            exclScenario("split-exclude-all", status: connected, mode: .all),
+            exclScenario("split-exclude-min", size: minSize, expanded: "service:youtube"),
+            exclScenario("blocked-exclude", status: exclBlocked, panel: false),
+            // README: clean rows, nothing expanded.
+            exclScenario("split-exclude-docs", status: exclDocs),
         ]
         let sampleList = sampleDevices(now: now)
         let hue = sampleList.first { $0.name == "Hue Bridge" }?.mac
@@ -419,6 +464,10 @@ enum PreviewRenderer {
         splitTR.label = "split-panel-tr"
         splitTR.language = .tr
         render(splitTR, scheme: .dark, now: now, into: directory)
+        var exclTR = splitScenarios.first { $0.label == "split-exclude" }!
+        exclTR.label = "split-exclude-tr"
+        exclTR.language = .tr
+        render(exclTR, scheme: .dark, now: now, into: directory)
         var devicesTR = deviceScenarios[0]
         devicesTR.label = "devices-tr"
         devicesTR.language = .tr

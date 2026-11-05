@@ -23,6 +23,10 @@ enum Theme {
     static let chipOutline = dynamic(light: 0xB9C4D0, dark: 0x3A4756)
     static let cobalt = dynamic(light: 0x2F5BEA, dark: 0x6B8CFF)
     static let signal = dynamic(light: 0xE0A030, dark: 0xF0B850)
+    /// Amber for the exclude direction ("skip the tunnel"). The light value is darker so text on its tint and on
+    /// the panel ground stays at 4.5:1 or more (4.6 to 6.4 measured); the dark one is the mockup's #F0B44C.
+    static let bypass = dynamic(light: 0x8A5200, dark: 0xF0B44C)
+    static let bypassTint = bypass.opacity(0.15)
     static let coral = dynamic(light: 0xD9574A, dark: 0xFF7A6B)
     static let hairline = dynamic(light: 0xD9E0E8, dark: 0x26313C)
     /// Filled surfaces (Connect button, selected chip). Dark mode uses a deeper cobalt than `cobalt`

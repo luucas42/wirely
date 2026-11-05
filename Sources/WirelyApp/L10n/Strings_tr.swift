@@ -275,6 +275,8 @@ let stringsTR: [L: String] = [
     .splitEmpty: "Liste boş. Yukarıdan bir site ya da IP ekle.",
     .splitAppliedNow: "Değişiklikler bağlantıyı kesmeden hemen uygulanır.",
     .splitAppliedOnConnect: "Bağlanınca uygulanır.",
+    .splitAppliedReconnects: "Hemen uygulanır; mod değişince bağlantı bir an yenilenir.",
+    .splitBrowserShort: "Chrome Güvenli DNS ve Safari Özel Geçiş site kurallarını atlar.",
     .splitModeReconnects: "Mod değişince bağlantı bir an yenilenir.",
     .splitBrowserNote: "Özel Güvenli DNS'li Chrome ve iCloud Özel Geçiş açık Safari site kurallarını atlar.",
     .splitBannerDNS: "Site kuralları için 53 portu gerekiyor; başka bir uygulama kullanıyor.",

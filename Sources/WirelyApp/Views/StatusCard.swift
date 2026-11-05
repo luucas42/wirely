@@ -91,7 +91,7 @@ struct StatusCard: View {
                 HStack { Spacer(minLength: 0); primaryButton(phase: phase) }
             }
         } else {
-            VStack(spacing: 8) {
+            VStack(spacing: 4) {
                 HStack(spacing: 12) {
                     titleBlock(phase: phase, status: status, now: now, pill: false)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -103,6 +103,7 @@ struct StatusCard: View {
                     routeButton(phase: phase)
                     if let config = tunnel.config { infoButton(config, status: status, now: now) }
                 }
+                if showsSplitPill { SplitStatusLine(tunnel: tunnel, store: controller.splitStore) }
             }
         }
     }
@@ -120,7 +121,7 @@ struct StatusCard: View {
                 .font(.mr(14, 500))
                 .foregroundStyle(isAlert ? Theme.coral : Theme.secondary)
                 .monospacedDigit()
-                .lineLimit(1)
+                .lineLimit(isAlert ? 2 : 1)
                 .truncationMode(.tail)
                 .minimumScaleFactor(0.85)
             if pill, showsSplitPill { splitPill.padding(.top, 4) }
