@@ -168,7 +168,7 @@ You can type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`), a
 **Skip the tunnel** (exclude):
 
 - Everything else goes through the tunnel exactly like All traffic.
-- Listed names are looked up with your network's own DNS servers, outside the tunnel, on sockets bound to the Wi-Fi/Ethernet interface. Their addresses get routes via your router.
+- Listed names are looked up with your network's own DNS servers, outside the tunnel, on sockets bound to the Wi-Fi/Ethernet interface. Their addresses get routes via your router. While the tunnel is up those sockets only reach servers on your local network, so if your network's DNS server is elsewhere (common in offices), listed names are looked up through the tunnel instead; their traffic still goes direct.
 - Addresses on your local network are never rerouted.
 - Every bypass route is recorded in `/Library/Application Support/Wirely/bypass.json`, so the routes are removed after a crash or a restart.
 - If the DNS forwarder can't run, DNS stays as in full-tunnel mode (the profile's servers, through the tunnel), never on your ISP.
