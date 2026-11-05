@@ -304,7 +304,7 @@ let stringsTR: [L: String] = [
     .splitSubDomainCountOut: "Alt alan adlarıyla, %d adres normal hattan",
     .splitSingleAddressOut: "Tek adres, normal hattan",
     .splitExcludeIPv6: "IPv6 dışlamaları desteklenmiyor",
-    .splitExcludeFooter: "Tünel düşerse listedekiler çalışmaya devam eder.",
+    .splitExcludeFooter: "Tünel düşerse listedekiler bilinen adresleriyle çalışır.",
     .splitBlockedExcluded: "Tünel düştü, kill switch listedekiler dışında her şeyi engelliyor.",
     .splitSummaryExcluded: "Tümü tünelden, %d hariç",
     .splitStatusSelected: "Gerisi normal bağlantından",

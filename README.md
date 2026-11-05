@@ -185,6 +185,7 @@ You can type a site (`example.com` covers its subdomains), an IP (`10.2.2.4`), a
 - There is no per-app exclusion; rules work on addresses, not programs.
 - Shared addresses: the YouTube preset also takes some other Google traffic (for example Gmail or Drive on the same addresses) out of the tunnel. The same applies to any site behind a shared CDN address, in either direction.
 - The preset domain lists are best effort. Services add and change domains, so a few may be missed.
+- Each rule keeps at most 256 learned addresses. A service that rotates hosts a lot (YouTube's video hosts) can reach that over a long session; addresses after that use the default for the direction (through the tunnel when excluded) until you reconnect.
 - Chrome with a custom Secure DNS provider and Safari with iCloud Private Relay resolve names themselves, so site rules don't apply there in either direction (IP rules do).
 
 ### Security and privacy

@@ -304,7 +304,7 @@ let stringsEN: [L: String] = [
     .splitSubDomainCountOut: "With subdomains, %d addresses direct",
     .splitSingleAddressOut: "Single address, direct",
     .splitExcludeIPv6: "IPv6 isn't supported for exclusions",
-    .splitExcludeFooter: "If the tunnel drops, the listed items keep working.",
+    .splitExcludeFooter: "If the tunnel drops, known listed addresses keep working.",
     .splitBlockedExcluded: "The tunnel dropped. The kill switch is blocking everything except the listed items.",
     .splitSummaryExcluded: "Tunnel, %d excluded",
     .splitStatusSelected: "The rest uses your normal connection",
